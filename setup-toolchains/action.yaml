@@ -31,12 +31,11 @@ runs:
       with:
         python-version: ${{ inputs.python-version }}
 
-    - name: Install Astral uv
+    - name: Set up Astral uv
       if: ${{ inputs.uv == 'true' }}
-      shell: bash
-      run: |
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.local/bin" >> $GITHUB_PATH
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
 
     - name: Set up Bun
       if: ${{ inputs.bun == 'true' }}
