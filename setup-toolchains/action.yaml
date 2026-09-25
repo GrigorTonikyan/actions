@@ -1,0 +1,54 @@
+name: "Setup Forge Workspace Toolchains"
+description: "Unified composite action for Bun, Python, uv, and dependency caching in Gitea Actions"
+inputs:
+  bun:
+    description: "Install and configure Bun environment"
+    required: false
+    default: "true"
+  bun-version:
+    description: "Bun version to install"
+    required: false
+    default: "latest"
+  uv:
+    description: "Install and configure Astral uv"
+    required: false
+    default: "false"
+  python-version:
+    description: "Python version to install (if uv/python requested)"
+    required: false
+    default: "3.13"
+  cache:
+    description: "Enable dependency caching"
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      if: ${{ inputs.uv == 'true' }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install Astral uv
+      if: ${{ inputs.uv == 'true' }}
+      shell: bash
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: Set up Bun
+      if: ${{ inputs.bun == 'true' }}
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: ${{ inputs.bun-version }}
+
+    - name: Cache Bun Dependencies
+      if: ${{ inputs.bun == 'true' && inputs.cache == 'true' }}
+      uses: actions/cache@v4
+      with:
+        path: ~/.bun/install/cache
+        key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', 'bun.lockb', 'package.json') }}
+        restore-keys: |
+          ${{ runner.os }}-bun-

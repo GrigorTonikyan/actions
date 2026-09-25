@@ -1,0 +1,29 @@
+name: "Setup Playwright Browsers"
+description: "Cross-platform Playwright browser binary cache and provisioning composite action"
+inputs:
+  cache:
+    description: "Enable ~/.cache/ms-playwright caching"
+    required: false
+    default: "true"
+  install-deps:
+    description: "Run playwright install --with-deps"
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Cache Playwright Browsers
+      if: ${{ inputs.cache == 'true' }}
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-playwright-${{ hashFiles('bun.lock', 'bun.lockb', 'package.json') }}
+        restore-keys: |
+          ${{ runner.os }}-playwright-
+
+    - name: Provision Playwright Browsers & OS Dependencies
+      if: ${{ inputs.install-deps == 'true' }}
+      shell: bash
+      run: |
+        bunx playwright install --with-deps
