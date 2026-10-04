@@ -1,8 +1,8 @@
 name: "Setup Playwright Browsers"
-description: "High-performance Playwright browser binary cache and dependency provisioning composite action"
+description: "Ultra-fast Playwright browser and runtime environment provisioning with official container detection"
 inputs:
   cache:
-    description: "Enable ~/.cache/ms-playwright and APT package caching"
+    description: "Enable ~/.cache/ms-playwright caching"
     required: false
     default: "true"
   install-deps:
@@ -13,6 +13,10 @@ inputs:
     description: "Browser to install (chromium, firefox, webkit, or all)"
     required: false
     default: "chromium"
+  only-shell:
+    description: "Only install headless shell when installing Chromium (~50 MB vs ~272 MB)"
+    required: false
+    default: "true"
 
 runs:
   using: "composite"
@@ -26,25 +30,13 @@ runs:
         NODE_OPTIONS: "--no-deprecation"
       with:
         path: ~/.cache/ms-playwright
-        key: ${{ runner.os }}-playwright-${{ inputs.browser }}-${{ hashFiles('bun.lock', 'bun.lockb', 'package.json') }}
+        key: ${{ runner.os }}-playwright-${{ inputs.browser }}-${{ inputs.only-shell }}-${{ hashFiles('bun.lock', 'bun.lockb', 'package.json') }}
         restore-keys: |
+          ${{ runner.os }}-playwright-${{ inputs.browser }}-${{ inputs.only-shell }}-
           ${{ runner.os }}-playwright-${{ inputs.browser }}-
           ${{ runner.os }}-playwright-
 
-    - name: Cache APT Archives (Linux)
-      id: apt-cache
-      if: ${{ runner.os == 'Linux' && inputs.install-deps == 'true' && inputs.cache == 'true' }}
-      uses: actions/cache@v4
-      env:
-        NODE_NO_WARNINGS: "1"
-        NODE_OPTIONS: "--no-deprecation"
-      with:
-        path: /var/cache/apt/archives
-        key: ${{ runner.os }}-apt-playwright-${{ hashFiles('bun.lock', 'bun.lockb', 'package.json') }}
-        restore-keys: |
-          ${{ runner.os }}-apt-playwright-
-
-    - name: Verify & Provision OS Dependencies
+    - name: Verify & Provision Runtime Dependencies
       if: ${{ inputs.install-deps == 'true' }}
       shell: bash
       env:
@@ -54,20 +46,38 @@ runs:
         NEEDRESTART_MODE: "a"
       run: |
         if [ "${{ runner.os }}" = "Linux" ]; then
-          echo "--> Verifying Playwright system dependencies for '${{ inputs.browser }}'..."
-          BROWSER_ARG="${{ inputs.browser }}"
-          if [ "$BROWSER_ARG" = "all" ] || [ -z "$BROWSER_ARG" ]; then
-            BROWSER_TARGET=""
-          else
-            BROWSER_TARGET="$BROWSER_ARG"
+          # 1. Fast check if running in official Playwright container or pre-warmed image
+          if [ -d "/ms-playwright" ] && [ -n "$(ls -A /ms-playwright 2>/dev/null)" ]; then
+            echo "--> [CONTAINER] Official Playwright container image detected (/ms-playwright present)."
+            echo "--> [OK] Skipping package installation (all libraries pre-baked)."
+            exit 0
           fi
 
-          if bunx playwright install-deps --dry-run $BROWSER_TARGET >/dev/null 2>&1; then
-            echo "--> [OK] All system dependencies for Playwright are already satisfied. Skipping apt-get."
-          else
-            echo "--> [INSTALL] Missing system dependencies detected. Installing required packages..."
-            bunx playwright install-deps $BROWSER_TARGET
+          # 2. Check if minimal headless runtime libraries are already satisfied
+          if dpkg -s libnss3 libasound2t64 libgbm1 fonts-liberation >/dev/null 2>&1; then
+            echo "--> [OK] Minimal headless Chromium runtime dependencies already satisfied. Skipping apt-get."
+            exit 0
           fi
+
+          echo "--> [PROVISION] Installing targeted headless Chromium runtime libraries (~6 MB)..."
+          apt-get update -qq && apt-get install -y --no-install-recommends \
+            libasound2t64 \
+            libatk-bridge2.0-0t64 \
+            libatk1.0-0t64 \
+            libcups2t64 \
+            libdrm2 \
+            libgbm1 \
+            libnspr4 \
+            libnss3 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxfixes3 \
+            libxkbcommon0 \
+            libxrandr2 \
+            libx11-xcb1 \
+            libxcb-dri3-0 \
+            fonts-liberation
+          echo "--> [DONE] Targeted runtime libraries installed successfully."
         else
           echo "--> OS is ${{ runner.os }}. Skipping Linux dependency provisioning."
         fi
@@ -78,13 +88,29 @@ runs:
         NODE_NO_WARNINGS: "1"
         NODE_OPTIONS: "--no-deprecation"
       run: |
+        # 1. Check if running in official Playwright container with pre-installed browsers
+        if [ -d "/ms-playwright" ] && [ -n "$(ls -A /ms-playwright 2>/dev/null)" ]; then
+          echo "--> [CONTAINER] Pre-installed Playwright browsers discovered in /ms-playwright."
+          echo "--> [OK] Skipping browser download entirely."
+          exit 0
+        fi
+
+        # 2. Check if restored from cache
         if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ]; then
-          echo "--> [CACHE HIT] Playwright browser binaries restored from cache. Skipping browser download."
+          echo "--> [CACHE HIT] Playwright browser binaries restored from cache (~/.cache/ms-playwright)."
+          echo "--> [OK] Skipping browser download."
+          exit 0
+        fi
+
+        # 3. Perform targeted download
+        TARGET_BROWSER="${{ inputs.browser }}"
+        if [ "$TARGET_BROWSER" = "all" ] || [ -z "$TARGET_BROWSER" ]; then
+          echo "--> [DOWNLOAD] Installing all Playwright browsers..."
+          bunx playwright install
+        elif [ "$TARGET_BROWSER" = "chromium" ] && [ "${{ inputs.only-shell }}" = "true" ]; then
+          echo "--> [DOWNLOAD] Installing lightweight Chromium headless shell (~50 MB)..."
+          bunx playwright install --only-shell chromium
         else
-          echo "--> [CACHE MISS] Downloading Playwright browser binary '${{ inputs.browser }}'..."
-          if [ "${{ inputs.browser }}" = "all" ] || [ -z "${{ inputs.browser }}" ]; then
-            bunx playwright install
-          else
-            bunx playwright install "${{ inputs.browser }}"
-          fi
+          echo "--> [DOWNLOAD] Installing Playwright browser '${TARGET_BROWSER}'..."
+          bunx playwright install "${TARGET_BROWSER}"
         fi
