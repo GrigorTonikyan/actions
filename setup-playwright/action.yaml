@@ -1,12 +1,12 @@
 name: "Setup Playwright Browsers"
-description: "Cross-platform Playwright browser binary cache and provisioning composite action"
+description: "High-performance Playwright browser binary cache and dependency provisioning composite action"
 inputs:
   cache:
-    description: "Enable ~/.cache/ms-playwright caching"
+    description: "Enable ~/.cache/ms-playwright and APT package caching"
     required: false
     default: "true"
   install-deps:
-    description: "Run playwright install --with-deps"
+    description: "Provision operating system dependencies when missing"
     required: false
     default: "true"
   browser:
@@ -31,7 +31,20 @@ runs:
           ${{ runner.os }}-playwright-${{ inputs.browser }}-
           ${{ runner.os }}-playwright-
 
-    - name: Provision Playwright Browsers & OS Dependencies
+    - name: Cache APT Archives (Linux)
+      id: apt-cache
+      if: ${{ runner.os == 'Linux' && inputs.install-deps == 'true' && inputs.cache == 'true' }}
+      uses: actions/cache@v4
+      env:
+        NODE_NO_WARNINGS: "1"
+        NODE_OPTIONS: "--no-deprecation"
+      with:
+        path: /var/cache/apt/archives
+        key: ${{ runner.os }}-apt-playwright-${{ hashFiles('bun.lock', 'bun.lockb', 'package.json') }}
+        restore-keys: |
+          ${{ runner.os }}-apt-playwright-
+
+    - name: Verify & Provision OS Dependencies
       if: ${{ inputs.install-deps == 'true' }}
       shell: bash
       env:
@@ -40,8 +53,38 @@ runs:
         DEBIAN_FRONTEND: "noninteractive"
         NEEDRESTART_MODE: "a"
       run: |
-        if [ "${{ inputs.browser }}" = "all" ] || [ -z "${{ inputs.browser }}" ]; then
-          bunx playwright install --with-deps
+        if [ "${{ runner.os }}" = "Linux" ]; then
+          echo "--> Verifying Playwright system dependencies for '${{ inputs.browser }}'..."
+          BROWSER_ARG="${{ inputs.browser }}"
+          if [ "$BROWSER_ARG" = "all" ] || [ -z "$BROWSER_ARG" ]; then
+            BROWSER_TARGET=""
+          else
+            BROWSER_TARGET="$BROWSER_ARG"
+          fi
+
+          if bunx playwright install-deps --dry-run $BROWSER_TARGET >/dev/null 2>&1; then
+            echo "--> [OK] All system dependencies for Playwright are already satisfied. Skipping apt-get."
+          else
+            echo "--> [INSTALL] Missing system dependencies detected. Installing required packages..."
+            bunx playwright install-deps $BROWSER_TARGET
+          fi
         else
-          bunx playwright install --with-deps "${{ inputs.browser }}"
+          echo "--> OS is ${{ runner.os }}. Skipping Linux dependency provisioning."
+        fi
+
+    - name: Provision Playwright Browsers
+      shell: bash
+      env:
+        NODE_NO_WARNINGS: "1"
+        NODE_OPTIONS: "--no-deprecation"
+      run: |
+        if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ]; then
+          echo "--> [CACHE HIT] Playwright browser binaries restored from cache. Skipping browser download."
+        else
+          echo "--> [CACHE MISS] Downloading Playwright browser binary '${{ inputs.browser }}'..."
+          if [ "${{ inputs.browser }}" = "all" ] || [ -z "${{ inputs.browser }}" ]; then
+            bunx playwright install
+          else
+            bunx playwright install "${{ inputs.browser }}"
+          fi
         fi

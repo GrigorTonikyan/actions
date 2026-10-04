@@ -1,0 +1,29 @@
+name: "Docker Container Registry Login"
+description: "Secure, zero-warning composite action for authenticating with container registries in Gitea Actions"
+inputs:
+  registry:
+    description: "Server address of Docker registry (default: git.gt-web-dev.com)"
+    required: false
+    default: "git.gt-web-dev.com"
+  username:
+    description: "Username used to log against the Docker registry"
+    required: false
+    default: "${{ github.repository_owner }}"
+  password:
+    description: "Password or Personal Access Token used to log against the Docker registry"
+    required: true
+  logout:
+    description: "Log out from the Docker registry at the end of the job"
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Authenticate with Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
+        logout: ${{ inputs.logout }}

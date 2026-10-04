@@ -60,9 +60,22 @@ Playwright browser binaries and operating system dependency installer with autom
   with:
     cache: "true"
     install-deps: "true"
+    browser: "chromium"
 ```
 
-### 4. `download-artifact`
+### 4. `docker-login`
+Secure, zero-warning composite action for authenticating with private or public container registries without plaintext credential warnings.
+
+```yaml
+- name: Log in to Private Registry
+  uses: self:gt-dev/actions/docker-login@v1
+  with:
+    registry: git.gt-web-dev.com
+    username: ${{ github.repository_owner }}
+    password: ${{ secrets.REGISTRY_TOKEN }}
+```
+
+### 5. `download-artifact`
 Zero-deprecation composite action for retrieving build artifacts across workflow jobs.
 
 ```yaml
@@ -73,7 +86,7 @@ Zero-deprecation composite action for retrieving build artifacts across workflow
     path: target/release
 ```
 
-### 5. `upload-artifact`
+### 6. `upload-artifact`
 Zero-deprecation composite action for uploading pipeline artifacts with automated retention.
 
 ```yaml
@@ -89,4 +102,4 @@ Zero-deprecation composite action for uploading pipeline artifacts with automate
 ## Release & Versioning Policy
 
 - Changes to action definitions are tagged with semantic versions (`v1.0.0`, `v1.1.0`) and major aliases (`v1`).
-- Workflows reference the major release tag `@v1` to receive non-breaking improvements automatically.
+- Workflows reference the major release tag `@v1` to receive non-breaking improvements automatically.
