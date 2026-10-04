@@ -37,6 +37,8 @@ runs:
       env:
         NODE_NO_WARNINGS: "1"
         NODE_OPTIONS: "--no-deprecation"
+        DEBIAN_FRONTEND: "noninteractive"
+        NEEDRESTART_MODE: "a"
       run: |
         if [ "${{ inputs.browser }}" = "all" ] || [ -z "${{ inputs.browser }}" ]; then
           bunx playwright install --with-deps
