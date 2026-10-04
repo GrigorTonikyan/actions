@@ -1,0 +1,27 @@
+name: "Download Artifact"
+description: "Zero-deprecation modern composite action for downloading Gitea Actions artifacts"
+inputs:
+  name:
+    description: "Artifact name to download. If not specified, all artifacts will be downloaded."
+    required: false
+  path:
+    description: "Destination path where the artifact should be downloaded"
+    required: false
+    default: "."
+  merge-multiple:
+    description: "Whether to merge multiple artifacts into the same directory when downloading all artifacts"
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Download Artifact
+      uses: actions/download-artifact@v4
+      env:
+        NODE_NO_WARNINGS: "1"
+        NODE_OPTIONS: "--no-deprecation"
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        merge-multiple: ${{ inputs.merge-multiple }}
