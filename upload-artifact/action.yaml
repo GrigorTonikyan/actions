@@ -1,0 +1,42 @@
+name: "Upload Artifact"
+description: "Zero-deprecation modern composite action for uploading Gitea Actions artifacts"
+inputs:
+  name:
+    description: "Artifact name to upload"
+    required: false
+    default: "artifact"
+  path:
+    description: "File, directory, or wildcard pattern to upload"
+    required: true
+  if-no-files-found:
+    description: "Behavior when no files are found (warn, error, ignore)"
+    required: false
+    default: "warn"
+  retention-days:
+    description: "Duration in days after which artifact expires"
+    required: false
+    default: "90"
+  compression-level:
+    description: "Zlib compression level (0-9)"
+    required: false
+    default: "6"
+  overwrite:
+    description: "Whether to overwrite existing artifact with same name"
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      env:
+        NODE_NO_WARNINGS: "1"
+        NODE_OPTIONS: "--no-deprecation"
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        if-no-files-found: ${{ inputs.if-no-files-found }}
+        retention-days: ${{ inputs.retention-days }}
+        compression-level: ${{ inputs.compression-level }}
+        overwrite: ${{ inputs.overwrite }}

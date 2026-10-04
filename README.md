@@ -62,6 +62,28 @@ Playwright browser binaries and operating system dependency installer with autom
     install-deps: "true"
 ```
 
+### 4. `download-artifact`
+Zero-deprecation composite action for retrieving build artifacts across workflow jobs.
+
+```yaml
+- name: Download Prebuilt Binaries
+  uses: self:gt-dev/actions/download-artifact@v1
+  with:
+    name: prebuilt-binaries
+    path: target/release
+```
+
+### 5. `upload-artifact`
+Zero-deprecation composite action for uploading pipeline artifacts with automated retention.
+
+```yaml
+- name: Upload Release Binaries
+  uses: self:gt-dev/actions/upload-artifact@v1
+  with:
+    name: prebuilt-binaries
+    path: target/release/*
+```
+
 ---
 
 ## Release & Versioning Policy
