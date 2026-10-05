@@ -1,0 +1,43 @@
+name: Publish Playwright Runner Image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "containers/playwright/**"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-publish:
+    name: Build & Publish Playwright Runner Container
+    runs-on: highperf
+    steps:
+      - name: Checkout Code
+        uses: builtin:checkout
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Private Gitea Container Registry
+        uses: self:gt-dev/actions/docker-login@v1
+        with:
+          registry: git.gt-web-dev.com
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Playwright Runner Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./containers/playwright
+          file: ./containers/playwright/Dockerfile
+          push: true
+          tags: |
+            git.gt-web-dev.com/gt-dev/playwright-runner:latest
+            git.gt-web-dev.com/gt-dev/playwright-runner:v1
+            git.gt-web-dev.com/gt-dev/playwright-runner:v1.63.0
+          cache-from: type=registry,ref=git.gt-web-dev.com/gt-dev/playwright-runner:buildcache
+          cache-to: type=inline
