@@ -30,9 +30,6 @@ runs:
   steps:
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
-      env:
-        NODE_NO_WARNINGS: "1"
-        NODE_OPTIONS: "--no-deprecation"
       with:
         name: ${{ inputs.name }}
         path: ${{ inputs.path }}

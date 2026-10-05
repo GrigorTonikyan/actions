@@ -97,9 +97,21 @@ Zero-deprecation composite action for uploading pipeline artifacts with automate
     path: target/release/*
 ```
 
+### 7. `playwright-runner` Container Image
+Dedicated enterprise Single Source of Truth container image (`git.gt-web-dev.com/gt-dev/playwright-runner:latest`) built on Ubuntu 24.04 Noble with Playwright browsers, Node.js LTS, and Bun pre-baked in `/ms-playwright`. Completely eliminates runtime `apt-get` package downloads and browser installs in CI.
+
+---
+
+## Zero-Warning & Deprecation Policy
+
+In accordance with enterprise development standards, this repository enforces a strict **Zero-Warning and Zero-Suppression Policy**:
+- Environment variables that silence warnings (such as `NODE_NO_WARNINGS="1"` or `NODE_OPTIONS="--no-deprecation"`) are strictly banned across all actions.
+- All actions are implemented using modern, officially supported action primitives (`@v4`, `@v5`) or native binaries to eliminate deprecation notices at the root.
+
 ---
 
 ## Release & Versioning Policy
 
 - Changes to action definitions are tagged with semantic versions (`v1.0.0`, `v1.1.0`) and major aliases (`v1`).
-- Workflows reference the major release tag `@v1` to receive non-breaking improvements automatically.
+- Workflows reference the major release tag `@v1` to receive non-breaking improvements automatically.
+- Both `refs/tags/v1` and `refs/heads/v1` are synchronized upon release to ensure deterministic Gitea runner resolution.

@@ -25,9 +25,6 @@ runs:
       id: playwright-cache
       if: ${{ inputs.cache == 'true' }}
       uses: actions/cache@v4
-      env:
-        NODE_NO_WARNINGS: "1"
-        NODE_OPTIONS: "--no-deprecation"
       with:
         path: ~/.cache/ms-playwright
         key: ${{ runner.os }}-playwright-${{ inputs.browser }}-${{ inputs.only-shell }}-${{ hashFiles('bun.lock', 'bun.lockb', 'package.json') }}
@@ -40,15 +37,13 @@ runs:
       if: ${{ inputs.install-deps == 'true' }}
       shell: bash
       env:
-        NODE_NO_WARNINGS: "1"
-        NODE_OPTIONS: "--no-deprecation"
         DEBIAN_FRONTEND: "noninteractive"
         NEEDRESTART_MODE: "a"
       run: |
         if [ "${{ runner.os }}" = "Linux" ]; then
           # 1. Fast check if running in official Playwright container or pre-warmed image
           if [ -d "/ms-playwright" ] && [ -n "$(ls -A /ms-playwright 2>/dev/null)" ]; then
-            echo "--> [CONTAINER] Official Playwright container image detected (/ms-playwright present)."
+            echo "--> [SSOT CONTAINER] Enterprise Playwright container image detected (/ms-playwright present)."
             echo "--> [OK] Skipping package installation (all libraries pre-baked)."
             exit 0
           fi
@@ -84,13 +79,10 @@ runs:
 
     - name: Provision Playwright Browsers
       shell: bash
-      env:
-        NODE_NO_WARNINGS: "1"
-        NODE_OPTIONS: "--no-deprecation"
       run: |
         # 1. Check if running in official Playwright container with pre-installed browsers
         if [ -d "/ms-playwright" ] && [ -n "$(ls -A /ms-playwright 2>/dev/null)" ]; then
-          echo "--> [CONTAINER] Pre-installed Playwright browsers discovered in /ms-playwright."
+          echo "--> [SSOT CONTAINER] Pre-installed Playwright browsers discovered in /ms-playwright."
           echo "--> [OK] Skipping browser download entirely."
           exit 0
         fi
