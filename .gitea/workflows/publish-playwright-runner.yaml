@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "containers/playwright/**"
+      - ".gitea/workflows/publish-playwright-runner.yaml"
   workflow_dispatch:
 
 concurrency:
