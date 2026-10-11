@@ -21,16 +21,27 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Resolve Playwright Version
+      id: playwright-version
+      shell: bash
+      run: |
+        PW_VERSION=$(bunx playwright --version 2>/dev/null | awk '{print $2}' || true)
+        if [ -z "$PW_VERSION" ]; then
+          PW_VERSION="default"
+        fi
+        echo "version=${PW_VERSION}" >> $GITHUB_OUTPUT
+        echo "--> Resolved Playwright version: ${PW_VERSION}"
+
     - name: Cache Playwright Browsers
       id: playwright-cache
       if: ${{ inputs.cache == 'true' }}
       uses: actions/cache@v4
       with:
         path: ~/.cache/ms-playwright
-        key: ${{ runner.os }}-playwright-${{ inputs.browser }}-${{ inputs.only-shell }}-${{ hashFiles('bun.lock', 'bun.lockb', 'package.json') }}
+        key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-${{ inputs.browser }}-${{ inputs.only-shell }}
         restore-keys: |
-          ${{ runner.os }}-playwright-${{ inputs.browser }}-${{ inputs.only-shell }}-
-          ${{ runner.os }}-playwright-${{ inputs.browser }}-
+          ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-${{ inputs.browser }}-
+          ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-
           ${{ runner.os }}-playwright-
 
     - name: Verify & Provision Runtime Dependencies
@@ -41,37 +52,15 @@ runs:
         NEEDRESTART_MODE: "a"
       run: |
         if [ "${{ runner.os }}" = "Linux" ]; then
-          # 1. Fast check if running in official Playwright container or pre-warmed image
-          if [ -d "/ms-playwright" ] && [ -n "$(ls -A /ms-playwright 2>/dev/null)" ]; then
-            echo "--> [SSOT CONTAINER] Enterprise Playwright container image detected (/ms-playwright present)."
-            echo "--> [OK] Skipping package installation (all libraries pre-baked)."
-            exit 0
-          fi
-
-          # 2. Check if minimal headless runtime libraries are already satisfied
-          if dpkg -s libnss3 libasound2t64 libgbm1 fonts-liberation >/dev/null 2>&1; then
-            echo "--> [OK] Minimal headless Chromium runtime dependencies already satisfied. Skipping apt-get."
+          # Check if all targeted headless Chromium runtime libraries are already satisfied
+          REQUIRED_PKGS="libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libcups2t64 libdrm2 libgbm1 libnspr4 libnss3 libxcomposite1 libxdamage1 libxfixes3 libxkbcommon0 libxrandr2 libx11-xcb1 libxcb-dri3-0 fonts-liberation"
+          if dpkg -s $REQUIRED_PKGS >/dev/null 2>&1; then
+            echo "--> [OK] All targeted headless Chromium runtime dependencies already satisfied. Skipping apt-get."
             exit 0
           fi
 
           echo "--> [PROVISION] Installing targeted headless Chromium runtime libraries (~6 MB)..."
-          apt-get update -qq && apt-get install -y --no-install-recommends \
-            libasound2t64 \
-            libatk-bridge2.0-0t64 \
-            libatk1.0-0t64 \
-            libcups2t64 \
-            libdrm2 \
-            libgbm1 \
-            libnspr4 \
-            libnss3 \
-            libxcomposite1 \
-            libxdamage1 \
-            libxfixes3 \
-            libxkbcommon0 \
-            libxrandr2 \
-            libx11-xcb1 \
-            libxcb-dri3-0 \
-            fonts-liberation
+          apt-get update -qq && apt-get install -y --no-install-recommends $REQUIRED_PKGS
           echo "--> [DONE] Targeted runtime libraries installed successfully."
         else
           echo "--> OS is ${{ runner.os }}. Skipping Linux dependency provisioning."
@@ -80,11 +69,36 @@ runs:
     - name: Provision Playwright Browsers
       shell: bash
       run: |
-        # 1. Check if running in official Playwright container with pre-installed browsers
-        if [ -d "/ms-playwright" ] && [ -n "$(ls -A /ms-playwright 2>/dev/null)" ]; then
-          echo "--> [SSOT CONTAINER] Pre-installed Playwright browsers discovered in /ms-playwright."
-          echo "--> [OK] Skipping browser download entirely."
-          exit 0
+        TARGET_BROWSER="${{ inputs.browser }}"
+
+        # 1. Check if running in container with /ms-playwright containing required browser revisions
+        if [ -d "/ms-playwright" ]; then
+          DRY_RUN_ARGS="$TARGET_BROWSER"
+          if [ "$TARGET_BROWSER" = "chromium" ] && [ "${{ inputs.only-shell }}" = "true" ]; then
+            DRY_RUN_ARGS="--only-shell chromium"
+          fi
+
+          MISSING_LOC=0
+          EXPECTED_LOCS=$(bunx playwright install --dry-run $DRY_RUN_ARGS 2>/dev/null | awk '/Install location:/ {print $3}' || true)
+          if [ -n "$EXPECTED_LOCS" ]; then
+            for loc in $EXPECTED_LOCS; do
+              if [ ! -d "$loc" ]; then
+                echo "--> [CONTAINER PROBE] Required browser path missing in /ms-playwright: $loc"
+                MISSING_LOC=1
+                break
+              fi
+            done
+            if [ "$MISSING_LOC" -eq 0 ]; then
+              echo "--> [SSOT CONTAINER] All required Playwright browsers verified in /ms-playwright."
+              echo "--> [OK] Skipping browser download entirely."
+              exit 0
+            else
+              echo "--> [CONTAINER NOTICE] Container /ms-playwright exists but lacks required browser revision. Proceeding to targeted install."
+            fi
+          elif [ -n "$(ls -A /ms-playwright 2>/dev/null)" ]; then
+            echo "--> [SSOT CONTAINER] Fallback: /ms-playwright is populated."
+            exit 0
+          fi
         fi
 
         # 2. Check if restored from cache
@@ -95,7 +109,6 @@ runs:
         fi
 
         # 3. Perform targeted download
-        TARGET_BROWSER="${{ inputs.browser }}"
         if [ "$TARGET_BROWSER" = "all" ] || [ -z "$TARGET_BROWSER" ]; then
           echo "--> [DOWNLOAD] Installing all Playwright browsers..."
           bunx playwright install

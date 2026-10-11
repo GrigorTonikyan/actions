@@ -11,6 +11,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build-and-publish:
     name: Build & Publish Playwright Runner Container
@@ -18,6 +22,29 @@ jobs:
     steps:
       - name: Checkout Code
         uses: builtin:checkout
+
+      - name: Resolve Playwright Version SSoT
+        id: version
+        shell: bash
+        run: |
+          if [ ! -f "containers/playwright/PLAYWRIGHT_VERSION" ]; then
+            echo "::error::containers/playwright/PLAYWRIGHT_VERSION not found!"
+            exit 1
+          fi
+          PW_VER=$(tr -d ' \r\n' < containers/playwright/PLAYWRIGHT_VERSION)
+          echo "version=${PW_VER}" >> $GITHUB_OUTPUT
+          echo "--> Resolved Playwright Container Version SSoT: ${PW_VER}"
+
+      - name: Validate Registry Credentials
+        shell: bash
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$REGISTRY_TOKEN" ]; then
+            echo "::error::Secret REGISTRY_TOKEN is not configured! Gitea Actions requires a personal access token with write:package scope."
+            exit 1
+          fi
+          echo "--> [OK] REGISTRY_TOKEN secret present."
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -27,17 +54,21 @@ jobs:
         with:
           registry: git.gt-web-dev.com
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
 
       - name: Build and Push Playwright Runner Image
         uses: docker/build-push-action@v5
         with:
           context: ./containers/playwright
           file: ./containers/playwright/Dockerfile
+          build-args: |
+            PLAYWRIGHT_VERSION=${{ steps.version.outputs.version }}
           push: true
           tags: |
             git.gt-web-dev.com/gt-dev/playwright-runner:latest
-            git.gt-web-dev.com/gt-dev/playwright-runner:v1
-            git.gt-web-dev.com/gt-dev/playwright-runner:v1.63.0
-          cache-from: type=registry,ref=git.gt-web-dev.com/gt-dev/playwright-runner:buildcache
+            git.gt-web-dev.com/gt-dev/playwright-runner:v${{ steps.version.outputs.version }}
+            git.gt-web-dev.com/gt-dev/playwright-runner:${{ steps.version.outputs.version }}
+          cache-from: |
+            type=registry,ref=git.gt-web-dev.com/gt-dev/playwright-runner:v${{ steps.version.outputs.version }}
+            type=registry,ref=git.gt-web-dev.com/gt-dev/playwright-runner:latest
           cache-to: type=inline

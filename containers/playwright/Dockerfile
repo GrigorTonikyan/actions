@@ -3,18 +3,22 @@
 #
 # Provides:
 # - Ubuntu 24.04 LTS (Noble Numbat)
-# - Playwright v1.63.0 with pre-baked Chromium, Firefox, and WebKit browsers in /ms-playwright
+# - Playwright with pre-baked Chromium, Firefox, and WebKit browsers in /ms-playwright
 # - All Linux OS audio, video, font, and X11/Wayland runtime dependencies
 # - Node.js LTS & npm
 # - Latest Bun runtime (/usr/local/bin/bun)
 # - xvfb and headless shell pre-configured
 
-FROM mcr.microsoft.com/playwright:v1.63.0-noble
+ARG PLAYWRIGHT_VERSION=1.64.0
+FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble
+
+ARG PLAYWRIGHT_VERSION=1.64.0
 
 # Set environment variables for noninteractive CI execution
 ENV DEBIAN_FRONTEND=noninteractive \
     NEEDRESTART_MODE=a \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    PLAYWRIGHT_VERSION=${PLAYWRIGHT_VERSION} \
     CI=true \
     BUN_INSTALL=/opt/bun \
     PATH="/opt/bun/bin:${PATH}"
@@ -38,6 +42,7 @@ RUN bun --version && \
 
 LABEL org.opencontainers.image.title="Playwright CI SSoT Runner" \
       org.opencontainers.image.description="Dedicated enterprise Playwright CI container image for Gitea Actions" \
+      org.opencontainers.image.version="${PLAYWRIGHT_VERSION}" \
       org.opencontainers.image.vendor="gt-dev" \
       org.opencontainers.image.source="https://git.gt-web-dev.com/gt-dev/actions"
 
