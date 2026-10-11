@@ -1,6 +1,6 @@
 # Gitea Actions Composite Action Library (`gt-dev/actions`)
 
-Centralized Single Source of Truth (SSoT) repository housing reusable, modular composite actions for **Gitea Actions** pipelines across all private organization repositories.
+Centralized Single Source of Truth (SSoT) repository housing reusable, modular composite actions and container images for **Gitea Actions** pipelines across all private organization repositories.
 
 ---
 
@@ -46,13 +46,13 @@ Cryptographically pinned Gitleaks secret scanner.
 - name: Scan Secrets
   uses: self:gt-dev/actions/gitleaks-scan@v1
   with:
-    version: "8.24.0"
+    version: "8.30.1"
     redact: "true"
     source: "."
 ```
 
 ### 3. `setup-playwright`
-Playwright browser binaries and operating system dependency installer with automated caching.
+Playwright browser binaries and operating system dependency installer with automated caching and container detection.
 
 ```yaml
 - name: Setup Playwright
@@ -61,7 +61,12 @@ Playwright browser binaries and operating system dependency installer with autom
     cache: "true"
     install-deps: "true"
     browser: "chromium"
+    only-shell: "true"
 ```
+
+- **Container Detection with Revision Probe**: Automatically discovers pre-baked browser revisions in `/ms-playwright` and skips downloads entirely. If a container lacks the required browser revision, it issues a notice and performs a targeted download.
+- **Complete Runtime OS Dependency Probe**: Probes all 16 Linux OS shared libraries required by headless Chromium via bulk `dpkg -s`. Skips `apt-get` entirely when pre-installed.
+- **Version-Keyed Caching**: Caches binaries keyed by resolved `@playwright/test` version rather than entire lockfiles, eliminating invalidation churn from unrelated dependencies.
 
 ### 4. `docker-login`
 Secure, zero-warning composite action for authenticating with private or public container registries without plaintext credential warnings.
@@ -97,8 +102,38 @@ Zero-deprecation composite action for uploading pipeline artifacts with automate
     path: target/release/*
 ```
 
-### 7. `playwright-runner` Container Image
-Dedicated enterprise Single Source of Truth container image (`git.gt-web-dev.com/gt-dev/playwright-runner:latest`) built on Ubuntu 24.04 Noble with Playwright browsers, Node.js LTS, and Bun pre-baked in `/ms-playwright`. Completely eliminates runtime `apt-get` package downloads and browser installs in CI.
+---
+
+## Container Images
+
+### `playwright-runner` Container Image
+Dedicated enterprise Single Source of Truth container image built on Ubuntu 24.04 Noble with Playwright browsers, Node.js LTS, and Bun pre-baked in `/ms-playwright`. Completely eliminates runtime `apt-get` package downloads and browser installs in CI.
+
+- **Registry Image Tags**:
+  - `git.gt-web-dev.com/gt-dev/playwright-runner:v1.64.0` (Recommended: exact Playwright version pinning)
+  - `git.gt-web-dev.com/gt-dev/playwright-runner:1.64.0`
+  - `git.gt-web-dev.com/gt-dev/playwright-runner:latest`
+- **SSoT Versioning**: Version is centrally declared in `containers/playwright/PLAYWRIGHT_VERSION` and enforced during image builds and workflow validation.
+
+```yaml
+jobs:
+  frontend-quality:
+    runs-on: ubuntu-latest
+    container:
+      image: git.gt-web-dev.com/gt-dev/playwright-runner:v1.64.0
+    steps:
+      - uses: builtin:checkout
+      - run: bun test:e2e
+```
+
+---
+
+## Quality Gates & Validation
+
+Every pull request and push to `main` undergoes automated validation via `.gitea/workflows/validate.yaml`:
+1. **Gitleaks Secret Scan**: Enforces zero credentials or tokens in repository code.
+2. **Action Manifest & SSoT Validation** (`scripts/validate-actions.sh`): Verifies required keys, zero-warning compliance, version file semver integrity, and Dockerfile ARG parity.
+3. **PR Quality & Merge Gate**: Required status check blocking merges until all checks pass.
 
 ---
 
@@ -112,6 +147,6 @@ In accordance with enterprise development standards, this repository enforces a 
 
 ## Release & Versioning Policy
 
-- Changes to action definitions are tagged with semantic versions (`v1.0.0`, `v1.1.0`) and major aliases (`v1`).
+- Changes to action definitions are tagged with semantic versions (`v1.0.0`, `v1.6.0`) and major aliases (`v1`).
 - Workflows reference the major release tag `@v1` to receive non-breaking improvements automatically.
-- Both `refs/tags/v1` and `refs/heads/v1` are synchronized upon release to ensure deterministic Gitea runner resolution.
+- Both `refs/tags/v1` and `refs/heads/v1` are synchronized upon release to ensure deterministic Gitea runner resolution.
