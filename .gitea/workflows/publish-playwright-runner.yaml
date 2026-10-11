@@ -46,9 +46,6 @@ jobs:
           fi
           echo "--> [OK] REGISTRY_TOKEN secret present."
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Log in to Private Gitea Container Registry
         uses: self:gt-dev/actions/docker-login@v1
         with:
@@ -56,19 +53,22 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.REGISTRY_TOKEN }}
 
-      - name: Build and Push Playwright Runner Image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./containers/playwright
-          file: ./containers/playwright/Dockerfile
-          build-args: |
-            PLAYWRIGHT_VERSION=${{ steps.version.outputs.version }}
-          push: true
-          tags: |
-            git.gt-web-dev.com/gt-dev/playwright-runner:latest
-            git.gt-web-dev.com/gt-dev/playwright-runner:v${{ steps.version.outputs.version }}
-            git.gt-web-dev.com/gt-dev/playwright-runner:${{ steps.version.outputs.version }}
-          cache-from: |
-            type=registry,ref=git.gt-web-dev.com/gt-dev/playwright-runner:v${{ steps.version.outputs.version }}
-            type=registry,ref=git.gt-web-dev.com/gt-dev/playwright-runner:latest
-          cache-to: type=inline
+      - name: Build Playwright Runner Image
+        shell: bash
+        run: |
+          echo "--> Building Playwright runner image for version ${{ steps.version.outputs.version }}..."
+          docker build \
+            --build-arg PLAYWRIGHT_VERSION=${{ steps.version.outputs.version }} \
+            -t git.gt-web-dev.com/gt-dev/playwright-runner:latest \
+            -t git.gt-web-dev.com/gt-dev/playwright-runner:v${{ steps.version.outputs.version }} \
+            -t git.gt-web-dev.com/gt-dev/playwright-runner:${{ steps.version.outputs.version }} \
+            ./containers/playwright
+
+      - name: Push Playwright Runner Image
+        shell: bash
+        run: |
+          echo "--> Pushing image tags to private container registry via local zero-trust loopback..."
+          docker push git.gt-web-dev.com/gt-dev/playwright-runner:latest
+          docker push git.gt-web-dev.com/gt-dev/playwright-runner:v${{ steps.version.outputs.version }}
+          docker push git.gt-web-dev.com/gt-dev/playwright-runner:${{ steps.version.outputs.version }}
+          echo "--> [SUCCESS] Playwright runner image published successfully."
