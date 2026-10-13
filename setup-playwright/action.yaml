@@ -52,6 +52,17 @@ runs:
         NEEDRESTART_MODE: "a"
       run: |
         if [ "${{ runner.os }}" = "Linux" ]; then
+          # Determine sudo usage for root vs non-root runner environments
+          SUDO=""
+          if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo"
+          fi
+
+          # Auto-configure dpkg force-unsafe-io to eliminate fsync stalls on CoW/overlay filesystems
+          if [ -d /etc/dpkg/dpkg.cfg.d ] && [ ! -f /etc/dpkg/dpkg.cfg.d/force-unsafe-io ]; then
+            echo "force-unsafe-io" | ($SUDO tee /etc/dpkg/dpkg.cfg.d/force-unsafe-io > /dev/null 2>&1 || tee /etc/dpkg/dpkg.cfg.d/force-unsafe-io > /dev/null 2>&1 || true)
+          fi
+
           # Check if all targeted headless Chromium runtime libraries are already satisfied
           REQUIRED_PKGS="libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libcups2t64 libdrm2 libgbm1 libnspr4 libnss3 libxcomposite1 libxdamage1 libxfixes3 libxkbcommon0 libxrandr2 libx11-xcb1 libxcb-dri3-0 fonts-liberation"
           if dpkg -s $REQUIRED_PKGS >/dev/null 2>&1; then
@@ -60,7 +71,7 @@ runs:
           fi
 
           echo "--> [PROVISION] Installing targeted headless Chromium runtime libraries (~6 MB)..."
-          apt-get update -qq && apt-get install -y --no-install-recommends $REQUIRED_PKGS
+          $SUDO apt-get update -qq && $SUDO apt-get install -y --no-install-recommends $REQUIRED_PKGS
           echo "--> [DONE] Targeted runtime libraries installed successfully."
         else
           echo "--> OS is ${{ runner.os }}. Skipping Linux dependency provisioning."
