@@ -66,6 +66,8 @@ Playwright browser binaries and operating system dependency installer with autom
 
 - **Container Detection with Revision Probe**: Automatically discovers pre-baked browser revisions in `/ms-playwright` and skips downloads entirely. If a container lacks the required browser revision, it issues a notice and performs a targeted download.
 - **Complete Runtime OS Dependency Probe**: Probes all 16 Linux OS shared libraries required by headless Chromium via bulk `dpkg -s`. Skips `apt-get` entirely when pre-installed.
+- **Automated Dpkg I/O Acceleration (`force-unsafe-io`)**: Automatically configures `/etc/dpkg/dpkg.cfg.d/force-unsafe-io` before provisioning, eliminating `fsync()` synchronous flush stalls across copy-on-write filesystems (ZFS / overlayfs) and delivering 5x–10x faster package extraction.
+- **Root & Non-Root Runner Compatibility**: Dynamically resolves privilege escalation (`$SUDO`) to function seamlessly in both root containers and standard non-root runner environments.
 - **Version-Keyed Caching**: Caches binaries keyed by resolved `@playwright/test` version rather than entire lockfiles, eliminating invalidation churn from unrelated dependencies.
 
 ### 4. `docker-login`
@@ -107,7 +109,7 @@ Zero-deprecation composite action for uploading pipeline artifacts with automate
 ## Container Images
 
 ### `playwright-runner` Container Image
-Dedicated enterprise Single Source of Truth container image built on Ubuntu 24.04 Noble with Playwright browsers, Node.js LTS, and Bun pre-baked in `/ms-playwright`. Completely eliminates runtime `apt-get` package downloads and browser installs in CI.
+Dedicated enterprise Single Source of Truth container image built on Ubuntu 24.04 Noble with Playwright browsers, Node.js LTS, Bun, and `/etc/dpkg/dpkg.cfg.d/force-unsafe-io` pre-baked in `/ms-playwright`. Completely eliminates runtime `apt-get` package downloads, browser installs, and disk sync stalls in CI.
 
 - **Registry Image Tags**:
   - `git.gt-web-dev.com/gt-dev/playwright-runner:v1.64.0` (Recommended: exact Playwright version pinning)

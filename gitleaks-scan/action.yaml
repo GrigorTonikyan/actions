@@ -24,13 +24,17 @@ runs:
     - name: Install Pinned & Verified Gitleaks
       shell: bash
       run: |
+        SUDO=""
+        if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+          SUDO="sudo"
+        fi
         curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${{ inputs.version }}/gitleaks_${{ inputs.version }}_linux_x64.tar.gz" -o gitleaks.tar.gz
         if [ -n "${{ inputs.sha256 }}" ]; then
           echo "${{ inputs.sha256 }}  gitleaks.tar.gz" | sha256sum -c -
         fi
         tar -xzf gitleaks.tar.gz gitleaks
         chmod +x gitleaks
-        sudo mv gitleaks /usr/local/bin/gitleaks
+        $SUDO mv gitleaks /usr/local/bin/gitleaks
         rm -f gitleaks.tar.gz
         gitleaks version
 

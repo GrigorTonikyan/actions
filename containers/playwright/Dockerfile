@@ -23,8 +23,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     BUN_INSTALL=/opt/bun \
     PATH="/opt/bun/bin:${PATH}"
 
-# Install latest Bun into /opt/bun and link to /usr/local/bin
-RUN apt-get update -qq && \
+# Configure dpkg force-unsafe-io to eliminate fsync stalls on CoW/overlay filesystems
+# and install latest Bun into /opt/bun linked to /usr/local/bin
+RUN echo "force-unsafe-io" > /etc/dpkg/dpkg.cfg.d/force-unsafe-io && \
+    apt-get update -qq && \
     apt-get install -y --no-install-recommends curl ca-certificates unzip git && \
     mkdir -p /opt/bun && \
     curl -fsSL https://bun.sh/install | BUN_INSTALL=/opt/bun bash && \

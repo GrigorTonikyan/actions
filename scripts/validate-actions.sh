@@ -35,10 +35,22 @@ for action_file in $ACTION_FILES; do
     echo "::error file=$action_file::Warning suppression variable detected in $action_file (violates zero-warning standard)"
     FAILED=1
   fi
+
+  # Enforce security standard: forbid set -x which risks secret leakage into runner logs
+  if grep -E "^\s*set\s+-[a-z]*x" "$action_file" >/dev/null 2>&1; then
+    echo "::error file=$action_file::Unsafe shell tracing 'set -x' detected in $action_file (security violation: exposes secrets)"
+    FAILED=1
+  fi
+
+  # Check setup-playwright force-unsafe-io configuration
+  if [[ "$action_file" == *"setup-playwright"* ]] && ! grep -q "force-unsafe-io" "$action_file"; then
+    echo "::error file=$action_file::setup-playwright must configure dpkg force-unsafe-io to prevent fsync stalls"
+    FAILED=1
+  fi
 done
 
-# 2. Validate PLAYWRIGHT_VERSION SSoT
-echo "--> [2/3] Validating Playwright container version SSoT..."
+# 2. Validate PLAYWRIGHT_VERSION SSoT & Dockerfile Optimizations
+echo "--> [2/3] Validating Playwright container version SSoT & Dockerfile..."
 PW_VER_FILE="containers/playwright/PLAYWRIGHT_VERSION"
 if [ ! -f "$PW_VER_FILE" ]; then
   echo "::error file=$PW_VER_FILE::Missing $PW_VER_FILE file!"
@@ -60,6 +72,13 @@ else
       FAILED=1
     else
       echo "    Dockerfile default ARG matches $PW_VER."
+    fi
+
+    if [ -f "$DOCKERFILE" ] && ! grep -q "force-unsafe-io" "$DOCKERFILE"; then
+      echo "::error file=$DOCKERFILE::Dockerfile must configure dpkg force-unsafe-io for build acceleration!"
+      FAILED=1
+    else
+      echo "    Dockerfile dpkg force-unsafe-io speedup verified."
     fi
   fi
 fi
