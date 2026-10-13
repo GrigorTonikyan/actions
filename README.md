@@ -51,7 +51,18 @@ Cryptographically pinned Gitleaks secret scanner.
     source: "."
 ```
 
-### 3. `setup-playwright`
+### 3. `setup-cddm`
+Cryptographically pinned binary installer and verifier for CDDM (Code Duplication Detection & Metrics) CLI with elevation support and container detection.
+
+```yaml
+- name: Setup CDDM
+  uses: self:gt-dev/actions/setup-cddm@v1
+  with:
+    version: "v4.0.1"
+    destination: "/usr/local/bin"
+```
+
+### 4. `setup-playwright`
 Playwright browser binaries and operating system dependency installer with automated caching and container detection.
 
 ```yaml
@@ -70,7 +81,7 @@ Playwright browser binaries and operating system dependency installer with autom
 - **Root & Non-Root Runner Compatibility**: Dynamically resolves privilege escalation (`$SUDO`) to function seamlessly in both root containers and standard non-root runner environments.
 - **Version-Keyed Caching**: Caches binaries keyed by resolved `@playwright/test` version rather than entire lockfiles, eliminating invalidation churn from unrelated dependencies.
 
-### 4. `docker-login`
+### 5. `docker-login`
 Secure, zero-warning composite action for authenticating with private or public container registries without plaintext credential warnings.
 
 ```yaml
@@ -82,7 +93,7 @@ Secure, zero-warning composite action for authenticating with private or public 
     password: ${{ secrets.REGISTRY_TOKEN }}
 ```
 
-### 5. `download-artifact`
+### 6. `download-artifact`
 Zero-deprecation composite action for retrieving build artifacts across workflow jobs.
 
 ```yaml
@@ -93,7 +104,7 @@ Zero-deprecation composite action for retrieving build artifacts across workflow
     path: target/release
 ```
 
-### 6. `upload-artifact`
+### 7. `upload-artifact`
 Zero-deprecation composite action for uploading pipeline artifacts with automated retention.
 
 ```yaml
