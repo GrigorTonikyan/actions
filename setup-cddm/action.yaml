@@ -1,0 +1,54 @@
+name: "Setup CDDM"
+description: "Pinned binary installer and verifier for CDDM (Code Duplication Detection & Metrics) CLI"
+inputs:
+  version:
+    description: "CDDM version to install"
+    required: false
+    default: "v4.0.1"
+  sha256:
+    description: "Expected SHA256 checksum for binary tarball"
+    required: false
+    default: "f4233175a1f2517ee42ef6135c781bd3a0eee4cf32da4d730d8b6c6dfba9d62f"
+  destination:
+    description: "Target binary installation directory"
+    required: false
+    default: "/usr/local/bin"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Pinned & Verified CDDM Binary
+      shell: bash
+      run: |
+        SUDO=""
+        if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+          SUDO="sudo"
+        fi
+
+        if command -v cddm >/dev/null 2>&1 && cddm --version 2>&1 | grep -q "${{ inputs.version }}"; then
+          echo "CDDM ${{ inputs.version }} is already installed and available in PATH."
+          exit 0
+        fi
+
+        TARGET_DIR="${{ inputs.destination }}"
+        $SUDO mkdir -p "$TARGET_DIR"
+
+        ARCHIVE_NAME="cddm-${{ inputs.version }}-x86_64-unknown-linux-gnu.tar.gz"
+        DOWNLOAD_URL="https://git.gt-web-dev.com/gt-dev/cddm/releases/download/${{ inputs.version }}/${ARCHIVE_NAME}"
+        TMP_DIR="/tmp/cddm-setup-${{ inputs.version }}"
+        mkdir -p "$TMP_DIR"
+
+        curl -sSL "$DOWNLOAD_URL" -o "${TMP_DIR}/${ARCHIVE_NAME}"
+        if [ -n "${{ inputs.sha256 }}" ]; then
+          echo "${{ inputs.sha256 }}  ${TMP_DIR}/${ARCHIVE_NAME}" | sha256sum -c -
+        fi
+
+        $SUDO tar -xzf "${TMP_DIR}/${ARCHIVE_NAME}" -C "$TARGET_DIR"
+        rm -rf "$TMP_DIR"
+        $SUDO chmod +x "${TARGET_DIR}"/cddm*
+
+        if ! command -v cddm >/dev/null 2>&1 && [ -f "${TARGET_DIR}/cddm" ]; then
+          echo "$TARGET_DIR" >> "$GITHUB_PATH"
+        fi
+
+        cddm --version
