@@ -13,6 +13,10 @@ inputs:
     description: "Install and configure Astral uv"
     required: false
     default: "false"
+  uv-version:
+    description: "Astral uv version to install (leave empty for latest or pyproject.toml / uv.toml pinned version)"
+    required: false
+    default: ""
   python-version:
     description: "Python version to install (if uv/python requested)"
     required: false
@@ -33,9 +37,10 @@ runs:
 
     - name: Set up Astral uv
       if: ${{ inputs.uv == 'true' }}
-      uses: astral-sh/setup-uv@v10
+      uses: astral-sh/setup-uv@v10.3.3
       with:
-        enable-cache: true
+        version: ${{ inputs.uv-version }}
+        enable-cache: ${{ inputs.cache == 'true' }}
 
     - name: Set up Bun
       if: ${{ inputs.bun == 'true' }}

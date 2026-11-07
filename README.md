@@ -36,6 +36,7 @@ Comprehensive workspace environment setup for Bun, Python, uv (v10), and depende
     bun: "true"
     bun-version: "latest"
     uv: "true"
+    uv-version: "latest" # or pin specific uv version, defaults to pyproject.toml / latest
     python-version: "3.13"
     cache: "true"
 ```

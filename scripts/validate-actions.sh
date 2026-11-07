@@ -55,6 +55,14 @@ for action_file in $ACTION_FILES; do
       FAILED=1
     fi
   fi
+
+  # Check setup-toolchains setup-uv tag validity (setup-uv does not have floating v8/v9/v10 tags)
+  if [[ "$action_file" == *"setup-toolchains"* ]]; then
+    if grep -E "astral-sh/setup-uv@v(8|9|10)$" "$action_file" >/dev/null 2>&1; then
+      echo "::error file=$action_file::setup-toolchains references invalid floating setup-uv tag without semver patch"
+      FAILED=1
+    fi
+  fi
 done
 
 # 2. Validate CDDM setup action checksum and semver format
