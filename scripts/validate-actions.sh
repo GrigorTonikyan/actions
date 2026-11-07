@@ -8,7 +8,7 @@ echo "========================================================"
 FAILED=0
 
 # 1. Validate composite action manifests
-echo "--> [1/3] Validating composite action manifests..."
+echo "--> [1/4] Validating composite action manifests..."
 ACTION_FILES=$(find . -maxdepth 2 \( -name "action.yaml" -o -name "action.yml" \) | sort)
 
 for action_file in $ACTION_FILES; do
@@ -47,10 +47,31 @@ for action_file in $ACTION_FILES; do
     echo "::error file=$action_file::setup-playwright must configure dpkg force-unsafe-io to prevent fsync stalls"
     FAILED=1
   fi
+
+  # Check artifact actions TLS CA trust configuration
+  if [[ "$action_file" == *"upload-artifact"* || "$action_file" == *"download-artifact"* ]]; then
+    if ! grep -q "NODE_EXTRA_CA_CERTS" "$action_file"; then
+      echo "::error file=$action_file::$action_file must configure NODE_EXTRA_CA_CERTS for secure internal loopback artifact transfer"
+      FAILED=1
+    fi
+  fi
 done
 
-# 2. Validate PLAYWRIGHT_VERSION SSoT & Dockerfile Optimizations
-echo "--> [2/3] Validating Playwright container version SSoT & Dockerfile..."
+# 2. Validate CDDM setup action checksum and semver format
+echo "--> [2/4] Validating CDDM setup action checksum..."
+CDDM_ACTION="setup-cddm/action.yaml"
+if [ -f "$CDDM_ACTION" ]; then
+  DEFAULT_SHA=$(grep -A 5 "sha256:" "$CDDM_ACTION" | grep "default:" | head -n1 | awk -F'"' '{print $2}')
+  if [ -z "$DEFAULT_SHA" ] || [ "${#DEFAULT_SHA}" -ne 64 ]; then
+    echo "::error file=$CDDM_ACTION::setup-cddm default SHA256 checksum must be a valid 64-character hexadecimal digest"
+    FAILED=1
+  else
+    echo "    Verified setup-cddm SHA256 default digest (${#DEFAULT_SHA} chars): $DEFAULT_SHA"
+  fi
+fi
+
+# 3. Validate PLAYWRIGHT_VERSION SSoT & Dockerfile Optimizations
+echo "--> [3/4] Validating Playwright container version SSoT & Dockerfile..."
 PW_VER_FILE="containers/playwright/PLAYWRIGHT_VERSION"
 if [ ! -f "$PW_VER_FILE" ]; then
   echo "::error file=$PW_VER_FILE::Missing $PW_VER_FILE file!"
@@ -83,8 +104,8 @@ else
   fi
 fi
 
-# 3. Check for forbidden file types (.js/.cjs/.mjs)
-echo "--> [3/3] Checking for forbidden file extensions..."
+# 4. Check for forbidden file types (.js/.cjs/.mjs)
+echo "--> [4/4] Checking for forbidden file extensions..."
 FORBIDDEN_FILES=$(find . -not -path "*/.git/*" \( -name "*.js" -o -name "*.cjs" -o -name "*.mjs" \) 2>/dev/null || true)
 if [ -n "$FORBIDDEN_FILES" ]; then
   echo "::error::Forbidden JavaScript files detected: $FORBIDDEN_FILES"

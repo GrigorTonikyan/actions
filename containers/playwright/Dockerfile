@@ -9,10 +9,10 @@
 # - Latest Bun runtime (/usr/local/bin/bun)
 # - xvfb and headless shell pre-configured
 
-ARG PLAYWRIGHT_VERSION=1.64.0
+ARG PLAYWRIGHT_VERSION=1.65.0
 FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble
 
-ARG PLAYWRIGHT_VERSION=1.64.0
+ARG PLAYWRIGHT_VERSION=1.65.0
 
 # Set environment variables for noninteractive CI execution
 ENV DEBIAN_FRONTEND=noninteractive \

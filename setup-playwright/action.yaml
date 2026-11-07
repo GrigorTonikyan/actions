@@ -25,10 +25,21 @@ runs:
       id: playwright-version
       shell: bash
       run: |
-        PW_VERSION=$(bunx playwright --version 2>/dev/null | awk '{print $2}' || true)
-        if [ -z "$PW_VERSION" ]; then
-          PW_VERSION="default"
+        PW_VERSION=""
+        if command -v bunx >/dev/null 2>&1; then
+          PW_VERSION=$(bunx playwright --version 2>/dev/null | awk '{print $2}' || true)
+        elif command -v npx >/dev/null 2>&1; then
+          PW_VERSION=$(npx playwright --version 2>/dev/null | awk '{print $2}' || true)
         fi
+
+        if [ -z "$PW_VERSION" ] && [ -f "package.json" ]; then
+          PW_VERSION=$(grep -E '"(@playwright/test|playwright)":' package.json | head -n1 | sed -E 's/.*"[\^~]?([0-9]+\.[0-9]+\.[0-9]+)".*/\1/' || true)
+        fi
+
+        if [ -z "$PW_VERSION" ]; then
+          PW_VERSION="1.65.0"
+        fi
+
         echo "version=${PW_VERSION}" >> $GITHUB_OUTPUT
         echo "--> Resolved Playwright version: ${PW_VERSION}"
 
@@ -81,6 +92,10 @@ runs:
       shell: bash
       run: |
         TARGET_BROWSER="${{ inputs.browser }}"
+        PW_RUNNER="bunx playwright"
+        if ! command -v bunx >/dev/null 2>&1 && command -v npx >/dev/null 2>&1; then
+          PW_RUNNER="npx playwright"
+        fi
 
         # 1. Check if running in container with /ms-playwright containing required browser revisions
         if [ -d "/ms-playwright" ]; then
@@ -90,7 +105,7 @@ runs:
           fi
 
           MISSING_LOC=0
-          EXPECTED_LOCS=$(bunx playwright install --dry-run $DRY_RUN_ARGS 2>/dev/null | awk '/Install location:/ {print $3}' || true)
+          EXPECTED_LOCS=$($PW_RUNNER install --dry-run $DRY_RUN_ARGS 2>/dev/null | awk '/Install location:/ {print $3}' || true)
           if [ -n "$EXPECTED_LOCS" ]; then
             for loc in $EXPECTED_LOCS; do
               if [ ! -d "$loc" ]; then
@@ -122,11 +137,11 @@ runs:
         # 3. Perform targeted download
         if [ "$TARGET_BROWSER" = "all" ] || [ -z "$TARGET_BROWSER" ]; then
           echo "--> [DOWNLOAD] Installing all Playwright browsers..."
-          bunx playwright install
+          $PW_RUNNER install
         elif [ "$TARGET_BROWSER" = "chromium" ] && [ "${{ inputs.only-shell }}" = "true" ]; then
           echo "--> [DOWNLOAD] Installing lightweight Chromium headless shell (~50 MB)..."
-          bunx playwright install --only-shell chromium
+          $PW_RUNNER install --only-shell chromium
         else
           echo "--> [DOWNLOAD] Installing Playwright browser '${TARGET_BROWSER}'..."
-          bunx playwright install "${TARGET_BROWSER}"
+          $PW_RUNNER install "${TARGET_BROWSER}"
         fi
