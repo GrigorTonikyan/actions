@@ -4,11 +4,11 @@ inputs:
   version:
     description: "CDDM version to install"
     required: false
-    default: "v4.0.1"
+    default: "v4.8.0"
   sha256:
     description: "Expected SHA256 checksum for binary tarball"
     required: false
-    default: "f4233175a1f2517ee42ef6135c781bd3a0eee4cf32da4d730d8b6c6dfba9d62f"
+    default: "ca8f7219549523b8d631f3c6557dfba79dca0fe5f8f434223616c96c456b52fd"
   destination:
     description: "Target binary installation directory"
     required: false
@@ -25,19 +25,27 @@ runs:
           SUDO="sudo"
         fi
 
-        if command -v cddm >/dev/null 2>&1 && cddm --version 2>&1 | grep -q "${{ inputs.version }}"; then
-          echo "CDDM ${{ inputs.version }} is already installed and available in PATH."
-          exit 0
+        RAW_VERSION="${{ inputs.version }}"
+        SEMVER="${RAW_VERSION#v}"
+        TAG_VERSION="v${SEMVER}"
+
+        if command -v cddm >/dev/null 2>&1; then
+          CURRENT_VER=$(cddm --version 2>&1 | awk '{print $2}' || true)
+          if [ "$CURRENT_VER" = "$SEMVER" ] || [ "$CURRENT_VER" = "$TAG_VERSION" ]; then
+            echo "CDDM ${CURRENT_VER} is already installed and available in PATH."
+            exit 0
+          fi
         fi
 
         TARGET_DIR="${{ inputs.destination }}"
         $SUDO mkdir -p "$TARGET_DIR"
 
-        ARCHIVE_NAME="cddm-${{ inputs.version }}-x86_64-unknown-linux-gnu.tar.gz"
-        DOWNLOAD_URL="https://git.gt-web-dev.com/gt-dev/cddm/releases/download/${{ inputs.version }}/${ARCHIVE_NAME}"
-        TMP_DIR="/tmp/cddm-setup-${{ inputs.version }}"
+        ARCHIVE_NAME="cddm-${TAG_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+        DOWNLOAD_URL="https://git.gt-web-dev.com/gt-dev/cddm/releases/download/${TAG_VERSION}/${ARCHIVE_NAME}"
+        TMP_DIR="/tmp/cddm-setup-${SEMVER}"
         mkdir -p "$TMP_DIR"
 
+        echo "--> Downloading CDDM ${TAG_VERSION} from ${DOWNLOAD_URL}..."
         curl -sSL "$DOWNLOAD_URL" -o "${TMP_DIR}/${ARCHIVE_NAME}"
         if [ -n "${{ inputs.sha256 }}" ]; then
           echo "${{ inputs.sha256 }}  ${TMP_DIR}/${ARCHIVE_NAME}" | sha256sum -c -
@@ -49,6 +57,7 @@ runs:
 
         if ! command -v cddm >/dev/null 2>&1 && [ -f "${TARGET_DIR}/cddm" ]; then
           echo "$TARGET_DIR" >> "$GITHUB_PATH"
+          export PATH="${TARGET_DIR}:${PATH}"
         fi
 
         cddm --version

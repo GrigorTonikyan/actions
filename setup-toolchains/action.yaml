@@ -33,7 +33,7 @@ runs:
 
     - name: Set up Astral uv
       if: ${{ inputs.uv == 'true' }}
-      uses: astral-sh/setup-uv@v5
+      uses: astral-sh/setup-uv@v10
       with:
         enable-cache: true
 
