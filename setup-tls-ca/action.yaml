@@ -1,0 +1,74 @@
+name: "Setup Internal Loopback TLS CA Trust"
+description: "Composite action configuring NODE_EXTRA_CA_CERTS, SSL_CERT_FILE, and CURL_CA_BUNDLE with internal Gitea CA trust"
+inputs:
+  configure-tls-ca:
+    description: "Enable TLS CA trust bundle configuration"
+    required: false
+    default: "true"
+  server-url:
+    description: "Gitea server URL used to derive /etc/docker/certs.d/<host>/ca.crt"
+    required: false
+    default: "${{ github.server_url }}"
+
+outputs:
+  ca-bundle-path:
+    description: "Resolved CA certificate bundle path exported to TLS environment variables"
+    value: ${{ steps.configure-ca.outputs.ca-bundle-path }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Configure Internal Loopback TLS CA Trust
+      id: configure-ca
+      if: ${{ inputs.configure-tls-ca == 'true' }}
+      shell: bash
+      env:
+        TARGET_SERVER_URL: ${{ inputs.server-url }}
+      run: |
+        set -euo pipefail
+        SERVER_URL="${TARGET_SERVER_URL:-${GITHUB_SERVER_URL:-}}"
+        SERVER_HOST="${SERVER_URL#https://}"
+        SERVER_HOST="${SERVER_HOST#http://}"
+        SERVER_HOST="${SERVER_HOST%%/*}"
+
+        INTERNAL_CA=""
+        if [ -n "$SERVER_HOST" ] && [ -f "/etc/docker/certs.d/${SERVER_HOST}/ca.crt" ]; then
+          INTERNAL_CA="/etc/docker/certs.d/${SERVER_HOST}/ca.crt"
+        fi
+
+        SYSTEM_CA="/etc/ssl/certs/ca-certificates.crt"
+        PKI_CA="/etc/pki/tls/certs/ca-bundle.crt"
+        RESOLVED_CA=""
+
+        if [ -n "$INTERNAL_CA" ] && [ -f "$INTERNAL_CA" ]; then
+          CA_BUNDLE="$(mktemp "${RUNNER_TEMP:-/tmp}/runner-ca-bundle.XXXXXX.crt")"
+          if [ -n "${NODE_EXTRA_CA_CERTS:-}" ] && [ -f "$NODE_EXTRA_CA_CERTS" ]; then
+            cat "$NODE_EXTRA_CA_CERTS" "$INTERNAL_CA" > "$CA_BUNDLE"
+          elif [ -f "$SYSTEM_CA" ]; then
+            cat "$SYSTEM_CA" "$INTERNAL_CA" > "$CA_BUNDLE"
+          elif [ -f "$PKI_CA" ]; then
+            cat "$PKI_CA" "$INTERNAL_CA" > "$CA_BUNDLE"
+          else
+            cp "$INTERNAL_CA" "$CA_BUNDLE"
+          fi
+          chmod 0644 "$CA_BUNDLE"
+          echo "NODE_EXTRA_CA_CERTS=${CA_BUNDLE}" >> "$GITHUB_ENV"
+          echo "SSL_CERT_FILE=${CA_BUNDLE}" >> "$GITHUB_ENV"
+          echo "CURL_CA_BUNDLE=${CA_BUNDLE}" >> "$GITHUB_ENV"
+          RESOLVED_CA="$CA_BUNDLE"
+          echo "--> [TLS] Configured CA trust bundle with internal CA for ${SERVER_HOST}"
+        elif [ -z "${NODE_EXTRA_CA_CERTS:-}" ]; then
+          if [ -f "$SYSTEM_CA" ]; then
+            echo "NODE_EXTRA_CA_CERTS=${SYSTEM_CA}" >> "$GITHUB_ENV"
+            RESOLVED_CA="$SYSTEM_CA"
+            echo "--> [TLS] Configured NODE_EXTRA_CA_CERTS=${SYSTEM_CA}"
+          elif [ -f "$PKI_CA" ]; then
+            echo "NODE_EXTRA_CA_CERTS=${PKI_CA}" >> "$GITHUB_ENV"
+            RESOLVED_CA="$PKI_CA"
+            echo "--> [TLS] Configured NODE_EXTRA_CA_CERTS=${PKI_CA}"
+          fi
+        else
+          RESOLVED_CA="${NODE_EXTRA_CA_CERTS}"
+        fi
+
+        echo "ca-bundle-path=${RESOLVED_CA}" >> "$GITHUB_OUTPUT"

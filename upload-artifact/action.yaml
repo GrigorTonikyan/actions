@@ -40,40 +40,12 @@ runs:
   using: "composite"
   steps:
     - name: Configure TLS CA Certificate Trust
-      shell: bash
-      run: |
-        CA_BUNDLE="/tmp/runner-ca-bundle.crt"
-        INTERNAL_CA="/etc/docker/certs.d/git.gt-web-dev.com/ca.crt"
-        SYSTEM_CA="/etc/ssl/certs/ca-certificates.crt"
-        PKI_CA="/etc/pki/tls/certs/ca-bundle.crt"
-
-        if [ -f "$INTERNAL_CA" ]; then
-          if [ -n "${NODE_EXTRA_CA_CERTS:-}" ] && [ -f "$NODE_EXTRA_CA_CERTS" ]; then
-            cat "$NODE_EXTRA_CA_CERTS" "$INTERNAL_CA" > "$CA_BUNDLE" 2>/dev/null || true
-          elif [ -f "$SYSTEM_CA" ]; then
-            cat "$SYSTEM_CA" "$INTERNAL_CA" > "$CA_BUNDLE" 2>/dev/null || true
-          elif [ -f "$PKI_CA" ]; then
-            cat "$PKI_CA" "$INTERNAL_CA" > "$CA_BUNDLE" 2>/dev/null || true
-          else
-            cp "$INTERNAL_CA" "$CA_BUNDLE" 2>/dev/null || true
-          fi
-          if [ -f "$CA_BUNDLE" ]; then
-            echo "NODE_EXTRA_CA_CERTS=$CA_BUNDLE" >> "$GITHUB_ENV"
-            echo "--> [TLS] Configured NODE_EXTRA_CA_CERTS with internal Gitea CA trust"
-          fi
-        elif [ -z "${NODE_EXTRA_CA_CERTS:-}" ]; then
-          if [ -f "$SYSTEM_CA" ]; then
-            echo "NODE_EXTRA_CA_CERTS=$SYSTEM_CA" >> "$GITHUB_ENV"
-            echo "--> [TLS] Configured NODE_EXTRA_CA_CERTS=$SYSTEM_CA"
-          elif [ -f "$PKI_CA" ]; then
-            echo "NODE_EXTRA_CA_CERTS=$PKI_CA" >> "$GITHUB_ENV"
-            echo "--> [TLS] Configured NODE_EXTRA_CA_CERTS=$PKI_CA"
-          fi
-        fi
+      uses: self:gt-dev/actions/setup-tls-ca@v1
 
     - name: Upload Artifact
       id: upload-artifact
-      uses: actions/upload-artifact@v4
+      # Intentionally pinned to v4.x for Gitea Actions Artifact v1 API compatibility
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: ${{ inputs.name }}
         path: ${{ inputs.path }}

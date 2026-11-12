@@ -20,7 +20,7 @@ This repository leverages the **Gitea Runner 5.0.0 native `self:` action resolut
 1. **Zero External Network Egress**: The runner resolves actions directly against the local Gitea instance (`https://git.gt-web-dev.com`) over internal loopback (`172.16.12.100`), guaranteeing zero WAN bandwidth usage and physical SSD/RAM bus speeds.
 2. **Zero URL Credentials**: No tokens, passwords, or personal access tokens (PATs) are embedded in action URLs. The runner authenticates automatically using its active job credentials.
 3. **No Hardcoded Hostnames**: Workflows across repositories reference actions cleanly via `self:gt-dev/actions/<action>@<ref>`, preserving repository portability.
-4. **Resilient Local Loopback TLS**: Artifact actions automatically configure Node.js with the internal Gitea CA certificates (`/etc/docker/certs.d/git.gt-web-dev.com/ca.crt` and system CAs), eliminating self-signed certificate errors without compromising TLS security.
+4. **Resilient Local Loopback TLS**: `setup-tls-ca@v1` (invoked automatically by `setup-toolchains`, `setup-cddm`, `upload-artifact`, and `download-artifact`) dynamically configures `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, and `CURL_CA_BUNDLE` using internal Gitea CA certificates (`/etc/docker/certs.d/<host>/ca.crt`) and system CAs without disabling TLS verification.
 
 ---
 
@@ -60,19 +60,19 @@ Cryptographically pinned Gitleaks secret scanner.
 ```
 
 ### 3. `setup-cddm`
-Cryptographically pinned binary installer and verifier for CDDM (Code Duplication Detection & Metrics) CLI with elevation support and container detection.
+Cryptographically pinned binary installer and verifier for CDDM (Code Duplication Detection & Metrics) CLI with elevation support, internal CA trust, and automatic release checksum verification.
 
 ```yaml
 - name: Setup CDDM
   uses: self:gt-dev/actions/setup-cddm@v1
   with:
-    version: "v4.8.0"
+    version: "v4.9.2"
     destination: "/usr/local/bin"
 ```
 
-- **Universal Version Normalization**: Accepts both `v4.8.0` and `4.8.0` formats seamlessly.
-- **SHA-256 Checksum Verification**: Automatically verifies the downloaded binary archive against cryptographic digests.
-- **Smart Idempotency Check**: Skips downloading if the requested version is already present in PATH.
+- **Universal Version Normalization**: Accepts both `v4.9.2` and `4.9.2` formats seamlessly.
+- **Zero-Hardcoded Endpoint & SHA-256 Verification**: Derives the download base URL dynamically from `${GITHUB_SERVER_URL}` and verifies the pinned SSoT SHA-256 digest by default, or fetches `SHA256SUMS.txt` automatically when overriding `version`.
+- **Smart Idempotency Check**: Skips downloading if the requested version is already present in `PATH`.
 
 ### 4. `setup-playwright`
 Playwright browser binaries and operating system dependency installer with automated caching and container detection.
@@ -95,13 +95,12 @@ Playwright browser binaries and operating system dependency installer with autom
 - **Version-Keyed Caching**: Caches binaries keyed by resolved `@playwright/test` version rather than entire lockfiles, eliminating invalidation churn from unrelated dependencies.
 
 ### 5. `docker-login`
-Secure, zero-warning composite action for authenticating with private or public container registries without plaintext credential warnings.
+Secure, zero-warning composite action for authenticating with private or public container registries without hardcoded defaults or plaintext credential warnings. Defaults `registry` to the host parsed from `${GITHUB_SERVER_URL}`.
 
 ```yaml
 - name: Log in to Private Registry
   uses: self:gt-dev/actions/docker-login@v1
   with:
-    registry: git.gt-web-dev.com
     username: ${{ github.repository_owner }}
     password: ${{ secrets.REGISTRY_TOKEN }}
 ```
@@ -161,6 +160,19 @@ Security-hardened, BuildKit-cached Docker build and push composite action target
 
 ---
 
+### 9. `setup-tls-ca`
+Reusable internal loopback TLS trust action that inspects `${GITHUB_SERVER_URL}`, combines `/etc/docker/certs.d/<host>/ca.crt` with the system CA bundle in a secure temporary file, and exports `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, and `CURL_CA_BUNDLE` to `$GITHUB_ENV`.
+
+```yaml
+- name: Configure Internal TLS CA Trust
+  uses: self:gt-dev/actions/setup-tls-ca@v1
+```
+
+**Outputs:**
+- `ca-bundle-path`: Resolved CA certificate bundle path exported to TLS environment variables.
+
+---
+
 ## Container Images
 
 ### `playwright-runner` Container Image
@@ -212,7 +224,7 @@ The `examples/nextjs/` directory provides copy-ready Next.js + Bun SSoT referenc
 
 Every pull request and manual dispatch undergoes automated validation via `.gitea/workflows/validate.yaml`:
 1. **Gitleaks Secret Scan**: Enforces zero credentials or tokens in repository code.
-2. **Action Manifest, Container & Workflow Validation** (`scripts/validate-actions.sh`): Verifies required keys, SHA-pinned upstream actions, `@sha256:` pinned container digests, `.dockerignore` coverage, `CWE-78` input-binding safety, zero-warning/pure-ASCII compliance, SSoT version integrity, and non-redundant workflow triggers.
+2. **Action Manifest, Container & Workflow Validation** (`scripts/validate-actions.sh`): Verifies required keys, 40-character commit-SHA pinned third-party actions, zero hardcoded internal hostnames in composite manifests, `@sha256:` pinned container digests, `.dockerignore` coverage, zero `CWE-78` template injection in `run:` blocks, zero-warning/pure-ASCII compliance, SSoT version/checksum integrity, and non-redundant workflow triggers.
 3. **PR Quality & Merge Gate**: Required status check blocking merges until all checks pass.
 
 ---
@@ -221,12 +233,12 @@ Every pull request and manual dispatch undergoes automated validation via `.gite
 
 In accordance with enterprise development standards, this repository enforces a strict **Zero-Warning and Zero-Suppression Policy**:
 - Environment variables that silence warnings (such as `NODE_NO_WARNINGS="1"` or `NODE_OPTIONS="--no-deprecation"`) are strictly banned across all actions.
-- All actions are implemented using modern, officially supported action primitives (`@v4`, `@v5`, `@v10`) or native binaries to eliminate deprecation notices at the root.
+- All third-party upstream actions are pinned to immutable 40-character commit SHAs running current Node 24 primitives (`actions/setup-python@v7.1.0`, `astral-sh/setup-uv@v10.3.3`, `oven-sh/setup-bun@v2.2.0`, `docker/login-action@v4.8.0`, `docker/build-push-action@v7.4.0`), while cache and artifact primitives (`actions/cache@v4.3.0`, `actions/upload-artifact@v4.6.2`, `actions/download-artifact@v4.3.0`) intentionally remain SHA-pinned on `@v4.x` for Gitea Actions v1 API compatibility alongside native verified binaries.
 
 ---
 
 ## Release & Versioning Policy
 
-- Changes to action definitions are tagged with semantic versions (`v1.0.0`, `v1.9.0`) and major aliases (`v1`).
+- Changes to action definitions are tagged with semantic versions (`v1.0.0`, `v1.10.0`) and major aliases (`v1`).
 - Workflows reference the major release tag `@v1` to receive non-breaking improvements automatically.
 - Both `refs/tags/v1` and `refs/heads/v1` are synchronized upon release to ensure deterministic Gitea runner resolution.
