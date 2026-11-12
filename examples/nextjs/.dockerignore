@@ -1,0 +1,56 @@
+# Version control & CI/Agent metadata
+.git
+.gitignore
+.gitattributes
+.gitea
+.github
+.agents
+.gemini
+.logs
+.vite-hooks
+.vscode
+.idea
+.cddmrules.toml
+
+# Documentation & templates
+README.md
+CONTRIBUTING.md
+AGENTS.md
+CHANGELOG.md
+LICENSE
+docs
+*.md
+
+# Tests, scripts & local artifacts
+tests
+scripts
+playwright-report
+test-results
+coverage
+*.log
+*.png
+*.zip
+tsconfig.tsbuildinfo
+
+# Local dependencies & build outputs
+node_modules
+**/node_modules
+.next
+**/.next
+dist
+**/dist
+build
+**/build
+.venv
+**/.venv
+__pycache__
+target
+
+# Secrets & container definitions
+.env
+.env.*
+!.env.example
+Dockerfile*
+.dockerignore
+compose*.yaml
+compose*.yml

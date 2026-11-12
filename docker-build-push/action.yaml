@@ -1,0 +1,550 @@
+name: "Docker Build & Push (Native DinD SSoT)"
+description: "Security-hardened, BuildKit-cached Docker build and push composite action targeting native DinD runners"
+inputs:
+  context:
+    description: "Build context path or URL"
+    required: false
+    default: "."
+  file:
+    description: "Path to the Dockerfile"
+    required: false
+    default: ""
+  target:
+    description: "Target stage in a multi-stage Dockerfile"
+    required: false
+    default: ""
+  tags:
+    description: "Newline- or comma-separated list of image tags"
+    required: false
+    default: ""
+  push:
+    description: "Push built image tags to the container registry"
+    required: false
+    default: "false"
+  load:
+    description: "Load built image into the local Docker daemon"
+    required: false
+    default: "false"
+  platforms:
+    description: "Target platforms (e.g., linux/amd64,linux/arm64)"
+    required: false
+    default: ""
+  build-args:
+    description: "Newline-separated list of build-time variables (KEY=VALUE)"
+    required: false
+    default: ""
+  build-contexts:
+    description: "Newline-separated list of additional build contexts (name=path)"
+    required: false
+    default: ""
+  labels:
+    description: "Newline-separated list of image metadata labels (KEY=VALUE)"
+    required: false
+    default: ""
+  annotations:
+    description: "Newline-separated list of OCI manifest annotations"
+    required: false
+    default: ""
+  oci-labels:
+    description: "Automatically attach standard org.opencontainers.image.* metadata labels"
+    required: false
+    default: "true"
+  cache-from:
+    description: "External BuildKit cache sources (newline-separated)"
+    required: false
+    default: ""
+  cache-to:
+    description: "External BuildKit cache export destinations (newline-separated)"
+    required: false
+    default: ""
+  cache-mode:
+    description: "Optional BuildKit cache preset (none, inline, gha, registry, local)"
+    required: false
+    default: ""
+  cache-ref:
+    description: "Cache reference for cache-mode=registry (image:tag) or local (directory path)"
+    required: false
+    default: ""
+  cache-scope:
+    description: "Optional cache scope for cache-mode=gha"
+    required: false
+    default: ""
+  inline-cache:
+    description: "Inject BUILDKIT_INLINE_CACHE=1 build-arg for downstream layer reuse"
+    required: false
+    default: "true"
+  outputs:
+    description: "Custom buildx output destinations"
+    required: false
+    default: ""
+  provenance:
+    description: "Build provenance attestation setting (default false for native DinD compatibility)"
+    required: false
+    default: "false"
+  sbom:
+    description: "SBOM attestation setting"
+    required: false
+    default: ""
+  no-cache:
+    description: "Disable BuildKit cache for this build"
+    required: false
+    default: "false"
+  no-cache-filters:
+    description: "Do not cache specified stages"
+    required: false
+    default: ""
+  pull:
+    description: "Always attempt to pull referenced base images"
+    required: false
+    default: "false"
+  secrets:
+    description: "BuildKit secrets (e.g., key=value)"
+    required: false
+    default: ""
+  secret-envs:
+    description: "BuildKit secret environment variable mappings"
+    required: false
+    default: ""
+  secret-files:
+    description: "BuildKit secret file mappings (e.g., id=path)"
+    required: false
+    default: ""
+  pass-internal-ca:
+    description: "Automatically expose runner internal CA certificate as BuildKit secret id=internal_ca when present"
+    required: false
+    default: "true"
+  ssh:
+    description: "SSH agent socket or keys to expose to build"
+    required: false
+    default: ""
+  add-hosts:
+    description: "Custom host-to-IP mappings"
+    required: false
+    default: ""
+  network:
+    description: "Networking mode for RUN instructions"
+    required: false
+    default: ""
+  shm-size:
+    description: "Size of /dev/shm"
+    required: false
+    default: ""
+  ulimit:
+    description: "Ulimit options"
+    required: false
+    default: ""
+  builder:
+    description: "Buildx builder name (defaults to native DinD builder)"
+    required: false
+    default: ""
+  allow-custom-builder:
+    description: "Allow non-default or docker-container builders (not recommended on native DinD runners)"
+    required: false
+    default: "false"
+  login:
+    description: "Registry authentication behavior: auto (when push=true and credentials exist), true, or false"
+    required: false
+    default: "auto"
+  registry:
+    description: "Container registry host (defaults to GITHUB_SERVER_URL host)"
+    required: false
+    default: ""
+  username:
+    description: "Registry username (defaults to repository owner)"
+    required: false
+    default: "${{ github.repository_owner }}"
+  password:
+    description: "Registry password or token (optional; falls back to REGISTRY_TOKEN / REGISTRY_PUSH_TOKEN env)"
+    required: false
+    default: ""
+  logout:
+    description: "Log out from the container registry after completion"
+    required: false
+    default: "true"
+  build-summary:
+    description: "Enable Docker Buildx job summary generation (DOCKER_BUILD_SUMMARY)"
+    required: false
+    default: "false"
+  build-record-upload:
+    description: "Enable Docker Buildx build record artifact upload (DOCKER_BUILD_RECORD_UPLOAD)"
+    required: false
+    default: "false"
+  github-token:
+    description: "Token used when accessing Git contexts"
+    required: false
+    default: "${{ github.token }}"
+
+outputs:
+  imageid:
+    description: "Built image ID"
+    value: ${{ steps.build.outputs.imageid }}
+  digest:
+    description: "Built image manifest digest"
+    value: ${{ steps.build.outputs.digest }}
+  metadata:
+    description: "Build result metadata JSON"
+    value: ${{ steps.build.outputs.metadata }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Prepare Native DinD, TLS CA, BuildKit Cache & OCI Metadata
+      id: prep
+      shell: bash
+      env:
+        INPUT_BUILDER: ${{ inputs.builder }}
+        INPUT_ALLOW_CUSTOM_BUILDER: ${{ inputs.allow-custom-builder }}
+        INPUT_PUSH: ${{ inputs.push }}
+        INPUT_LOGIN: ${{ inputs.login }}
+        INPUT_REGISTRY: ${{ inputs.registry }}
+        INPUT_USERNAME: ${{ inputs.username }}
+        INPUT_PASSWORD: ${{ inputs.password }}
+        INPUT_TAGS: ${{ inputs.tags }}
+        INPUT_BUILD_ARGS: ${{ inputs.build-args }}
+        INPUT_INLINE_CACHE: ${{ inputs.inline-cache }}
+        INPUT_CACHE_FROM: ${{ inputs.cache-from }}
+        INPUT_CACHE_TO: ${{ inputs.cache-to }}
+        INPUT_CACHE_MODE: ${{ inputs.cache-mode }}
+        INPUT_CACHE_REF: ${{ inputs.cache-ref }}
+        INPUT_CACHE_SCOPE: ${{ inputs.cache-scope }}
+        INPUT_LABELS: ${{ inputs.labels }}
+        INPUT_OCI_LABELS: ${{ inputs.oci-labels }}
+        INPUT_SECRET_FILES: ${{ inputs.secret-files }}
+        INPUT_PASS_INTERNAL_CA: ${{ inputs.pass-internal-ca }}
+        INPUT_BUILD_SUMMARY: ${{ inputs.build-summary }}
+        INPUT_BUILD_RECORD_UPLOAD: ${{ inputs.build-record-upload }}
+      run: |
+        set -euo pipefail
+
+        write_output() {
+          local key="$1"
+          local val="$2"
+          if [ -z "$val" ]; then
+            printf '%s=\n' "$key" >> "$GITHUB_OUTPUT"
+            return 0
+          fi
+          local delim="EOF_${RANDOM}_$$_$(date +%s)"
+          {
+            printf '%s<<%s\n' "$key" "$delim"
+            printf '%s\n' "$val"
+            printf '%s\n' "$delim"
+          } >> "$GITHUB_OUTPUT"
+        }
+
+        append_line() {
+          local current="$1"
+          local addition="$2"
+          if [ -z "$addition" ]; then
+            printf '%s' "$current"
+          elif [ -z "$current" ]; then
+            printf '%s' "$addition"
+          else
+            printf '%s\n%s' "$current" "$addition"
+          fi
+        }
+
+        # 1. Suppress Buildx summary and build record upload overhead cleanly
+        SUMMARY_VAL="${INPUT_BUILD_SUMMARY:-false}"
+        RECORD_VAL="${INPUT_BUILD_RECORD_UPLOAD:-false}"
+        echo "DOCKER_BUILD_SUMMARY=${SUMMARY_VAL}" >> "$GITHUB_ENV"
+        echo "DOCKER_BUILD_RECORD_UPLOAD=${RECORD_VAL}" >> "$GITHUB_ENV"
+
+        # 2. Configure dynamic TLS CA certificate trust from GITHUB_SERVER_URL
+        SERVER_HOST="${GITHUB_SERVER_URL:-}"
+        SERVER_HOST="${SERVER_HOST#https://}"
+        SERVER_HOST="${SERVER_HOST#http://}"
+        SERVER_HOST="${SERVER_HOST%%/*}"
+
+        INTERNAL_CA=""
+        if [ -n "$SERVER_HOST" ] && [ -f "/etc/docker/certs.d/${SERVER_HOST}/ca.crt" ]; then
+          INTERNAL_CA="/etc/docker/certs.d/${SERVER_HOST}/ca.crt"
+        fi
+
+        SYSTEM_CA="/etc/ssl/certs/ca-certificates.crt"
+        PKI_CA="/etc/pki/tls/certs/ca-bundle.crt"
+        ACTIVE_CA=""
+
+        if [ -n "$INTERNAL_CA" ] && [ -f "$INTERNAL_CA" ]; then
+          CA_BUNDLE="$(mktemp "${RUNNER_TEMP:-/tmp}/runner-ca-bundle.XXXXXX.crt")"
+          if [ -n "${NODE_EXTRA_CA_CERTS:-}" ] && [ -f "$NODE_EXTRA_CA_CERTS" ]; then
+            cat "$NODE_EXTRA_CA_CERTS" "$INTERNAL_CA" > "$CA_BUNDLE"
+          elif [ -f "$SYSTEM_CA" ]; then
+            cat "$SYSTEM_CA" "$INTERNAL_CA" > "$CA_BUNDLE"
+          elif [ -f "$PKI_CA" ]; then
+            cat "$PKI_CA" "$INTERNAL_CA" > "$CA_BUNDLE"
+          else
+            cp "$INTERNAL_CA" "$CA_BUNDLE"
+          fi
+          chmod 0644 "$CA_BUNDLE"
+          echo "NODE_EXTRA_CA_CERTS=${CA_BUNDLE}" >> "$GITHUB_ENV"
+          echo "SSL_CERT_FILE=${CA_BUNDLE}" >> "$GITHUB_ENV"
+          echo "CURL_CA_BUNDLE=${CA_BUNDLE}" >> "$GITHUB_ENV"
+          ACTIVE_CA="$CA_BUNDLE"
+          echo "--> [TLS] Configured CA trust bundle with internal CA for ${SERVER_HOST}"
+        else
+          if [ -f "$SYSTEM_CA" ]; then
+            ACTIVE_CA="$SYSTEM_CA"
+          elif [ -f "$PKI_CA" ]; then
+            ACTIVE_CA="$PKI_CA"
+          fi
+          if [ -z "${NODE_EXTRA_CA_CERTS:-}" ] && [ -n "$ACTIVE_CA" ]; then
+            echo "NODE_EXTRA_CA_CERTS=${ACTIVE_CA}" >> "$GITHUB_ENV"
+            echo "--> [TLS] Configured NODE_EXTRA_CA_CERTS=${ACTIVE_CA}"
+          fi
+        fi
+
+        # 3. Validate native DinD Docker daemon and reject extra setup-buildx builders
+        if ! docker info >/dev/null 2>&1; then
+          echo "::error::Docker daemon is not accessible. Run container builds on a DinD-enabled runner (e.g., ubuntu-latest-12-cores or highperf)."
+          exit 1
+        fi
+
+        if ! docker buildx version >/dev/null 2>&1; then
+          echo "::error::Docker Buildx CLI plugin is not installed on this runner."
+          exit 1
+        fi
+
+        INSPECT_OUT="$(docker buildx inspect 2>/dev/null || true)"
+        ACTIVE_BUILDER="$(printf '%s\n' "$INSPECT_OUT" | awk -F': *' '/^Name:/ {print $2; exit}')"
+        ACTIVE_DRIVER="$(printf '%s\n' "$INSPECT_OUT" | awk -F': *' '/^Driver:/ {print $2; exit}')"
+
+        TARGET_BUILDER=""
+        if [ "${INPUT_ALLOW_CUSTOM_BUILDER}" = "true" ]; then
+          TARGET_BUILDER="${INPUT_BUILDER}"
+          echo "--> [BUILDX] Custom builder override enabled (builder='${TARGET_BUILDER:-<active>}')."
+        else
+          if [ -n "$INPUT_BUILDER" ] && [ "$INPUT_BUILDER" != "default" ]; then
+            echo "::error::Custom builder '${INPUT_BUILDER}' is blocked on native DinD runners. Use the native 'default' builder (without docker/setup-buildx-action) to preserve /etc/docker/certs.d CA trust and loopback routing, or set allow-custom-builder: 'true'."
+            exit 1
+          fi
+
+          if [ -n "$ACTIVE_DRIVER" ] && [ "$ACTIVE_DRIVER" != "docker" ]; then
+            echo "::error::Active Buildx builder '${ACTIVE_BUILDER}' uses driver '${ACTIVE_DRIVER}' (typically created by docker/setup-buildx-action). Remove setup-buildx-action on native DinD runners, or set allow-custom-builder: 'true' if intentionally overriding."
+            exit 1
+          fi
+
+          if docker buildx ls 2>/dev/null | grep -qE '^default[[:space:]*]'; then
+            TARGET_BUILDER="default"
+          fi
+
+          if docker buildx ls 2>/dev/null | grep -q 'docker-container'; then
+            echo "::warning::Detected non-default docker-container builder(s) on native DinD runner; forcing builder '${TARGET_BUILDER:-active}'."
+          fi
+          echo "--> [BUILDX] Verified native Docker engine (builder='${TARGET_BUILDER:-${ACTIVE_BUILDER:-default}}', driver='${ACTIVE_DRIVER:-docker}')."
+        fi
+        write_output "builder" "$TARGET_BUILDER"
+
+        # 4. Resolve optional registry authentication
+        TARGET_REGISTRY="${INPUT_REGISTRY:-$SERVER_HOST}"
+        TARGET_USERNAME="${INPUT_USERNAME:-${GITHUB_REPOSITORY_OWNER:-${GITHUB_ACTOR:-}}}"
+        SHOULD_LOGIN="false"
+        case "${INPUT_LOGIN}" in
+          true)
+            SHOULD_LOGIN="true"
+            ;;
+          false)
+            SHOULD_LOGIN="false"
+            ;;
+          auto|"")
+            if [ "${INPUT_PUSH}" = "true" ]; then
+              SHOULD_LOGIN="true"
+            fi
+            ;;
+          *)
+            echo "::error::Invalid login input '${INPUT_LOGIN}'. Expected 'auto', 'true', or 'false'."
+            exit 1
+            ;;
+        esac
+
+        LOGIN_MODE="none"
+        if [ "$SHOULD_LOGIN" = "true" ]; then
+          if [ -z "$TARGET_REGISTRY" ]; then
+            echo "::warning::Registry login requested, but registry hostname could not be resolved from inputs.registry or GITHUB_SERVER_URL."
+          elif [ -n "$INPUT_PASSWORD" ]; then
+            LOGIN_MODE="action"
+          elif [ -n "${REGISTRY_TOKEN:-}" ] || [ -n "${REGISTRY_PUSH_TOKEN:-}" ]; then
+            LOGIN_MODE="env"
+          else
+            echo "--> [AUTH] No credentials provided via inputs.password or REGISTRY_TOKEN/REGISTRY_PUSH_TOKEN; assuming pre-authenticated Docker session."
+          fi
+        fi
+
+        write_output "login-mode" "$LOGIN_MODE"
+        write_output "registry" "$TARGET_REGISTRY"
+        write_output "username" "$TARGET_USERNAME"
+
+        # 5. Assemble build-args with BUILDKIT_INLINE_CACHE=1 support
+        BUILD_ARGS_OUT="$(printf '%s\n' "${INPUT_BUILD_ARGS}" | sed '/^[[:space:]]*$/d' || true)"
+        if [ "${INPUT_INLINE_CACHE}" = "true" ] && ! printf '%s\n' "$BUILD_ARGS_OUT" | grep -qE '^BUILDKIT_INLINE_CACHE='; then
+          BUILD_ARGS_OUT="$(append_line "$BUILD_ARGS_OUT" "BUILDKIT_INLINE_CACHE=1")"
+        fi
+        write_output "build-args" "$BUILD_ARGS_OUT"
+
+        # 6. Assemble BuildKit cache-from / cache-to configuration
+        CACHE_FROM_OUT="$(printf '%s\n' "${INPUT_CACHE_FROM}" | sed '/^[[:space:]]*$/d' || true)"
+        CACHE_TO_OUT="$(printf '%s\n' "${INPUT_CACHE_TO}" | sed '/^[[:space:]]*$/d' || true)"
+
+        FIRST_TAG="$(printf '%s\n' "${INPUT_TAGS}" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d' | head -n1 || true)"
+        DEFAULT_CACHE_REF=""
+        if [ -n "$FIRST_TAG" ]; then
+          LAST_SEG="${FIRST_TAG##*/}"
+          if [[ "$LAST_SEG" == *:* ]]; then
+            DEFAULT_CACHE_REF="${FIRST_TAG%:*}:buildcache"
+          else
+            DEFAULT_CACHE_REF="${FIRST_TAG}:buildcache"
+          fi
+        fi
+
+        case "${INPUT_CACHE_MODE}" in
+          ""|none)
+            ;;
+          inline)
+            if [ -n "$INPUT_CACHE_REF" ] && [ -z "$CACHE_FROM_OUT" ]; then
+              CACHE_FROM_OUT="$(append_line "$CACHE_FROM_OUT" "type=registry,ref=${INPUT_CACHE_REF}")"
+            fi
+            ;;
+          registry)
+            REG_REF="${INPUT_CACHE_REF:-$DEFAULT_CACHE_REF}"
+            if [ -z "$REG_REF" ]; then
+              echo "::error::cache-mode=registry requires inputs.cache-ref or at least one image tag in inputs.tags."
+              exit 1
+            fi
+            if [ -z "$CACHE_FROM_OUT" ]; then
+              CACHE_FROM_OUT="$(append_line "$CACHE_FROM_OUT" "type=registry,ref=${REG_REF}")"
+            fi
+            if [ -z "$CACHE_TO_OUT" ] && [ "${INPUT_PUSH}" = "true" ]; then
+              CACHE_TO_OUT="$(append_line "$CACHE_TO_OUT" "type=registry,ref=${REG_REF},mode=max")"
+            fi
+            ;;
+          gha)
+            SCOPE_SUFFIX=""
+            if [ -n "$INPUT_CACHE_SCOPE" ]; then
+              SCOPE_SUFFIX=",scope=${INPUT_CACHE_SCOPE}"
+            fi
+            if [ -z "$CACHE_FROM_OUT" ]; then
+              CACHE_FROM_OUT="$(append_line "$CACHE_FROM_OUT" "type=gha${SCOPE_SUFFIX}")"
+            fi
+            if [ -z "$CACHE_TO_OUT" ]; then
+              CACHE_TO_OUT="$(append_line "$CACHE_TO_OUT" "type=gha,mode=max${SCOPE_SUFFIX}")"
+            fi
+            ;;
+          local)
+            LOCAL_DIR="${INPUT_CACHE_REF:-/tmp/.buildx-cache}"
+            if [ -z "$CACHE_FROM_OUT" ] && [ -d "$LOCAL_DIR" ]; then
+              CACHE_FROM_OUT="$(append_line "$CACHE_FROM_OUT" "type=local,src=${LOCAL_DIR}")"
+            fi
+            if [ -z "$CACHE_TO_OUT" ]; then
+              CACHE_TO_OUT="$(append_line "$CACHE_TO_OUT" "type=local,dest=${LOCAL_DIR},mode=max")"
+            fi
+            ;;
+          *)
+            echo "::error::Invalid cache-mode '${INPUT_CACHE_MODE}'. Expected none, inline, gha, registry, or local."
+            exit 1
+            ;;
+        esac
+
+        write_output "cache-from" "$CACHE_FROM_OUT"
+        write_output "cache-to" "$CACHE_TO_OUT"
+
+        # 7. Assemble standard OCI metadata labels without overriding explicit user labels
+        LABELS_OUT="$(printf '%s\n' "${INPUT_LABELS}" | sed '/^[[:space:]]*$/d' || true)"
+        if [ "${INPUT_OCI_LABELS}" = "true" ]; then
+          add_oci_label() {
+            local key="$1"
+            local val="$2"
+            if [ -n "$val" ] && ! printf '%s\n' "$LABELS_OUT" | grep -qE "^${key}="; then
+              LABELS_OUT="$(append_line "$LABELS_OUT" "${key}=${val}")"
+            fi
+          }
+
+          if [ -n "${GITHUB_SERVER_URL:-}" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
+            add_oci_label "org.opencontainers.image.source" "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          fi
+          add_oci_label "org.opencontainers.image.revision" "${GITHUB_SHA:-}"
+          add_oci_label "org.opencontainers.image.ref.name" "${GITHUB_REF_NAME:-}"
+          add_oci_label "org.opencontainers.image.vendor" "${GITHUB_REPOSITORY_OWNER:-}"
+          if [ -n "${GITHUB_REPOSITORY:-}" ]; then
+            add_oci_label "org.opencontainers.image.title" "${GITHUB_REPOSITORY##*/}"
+          fi
+          add_oci_label "org.opencontainers.image.created" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        fi
+        write_output "labels" "$LABELS_OUT"
+
+        # 8. Expose runner internal CA certificate as optional BuildKit secret id=internal_ca
+        SECRET_FILES_OUT="$(printf '%s\n' "${INPUT_SECRET_FILES}" | sed '/^[[:space:]]*$/d' || true)"
+        if [ "${INPUT_PASS_INTERNAL_CA}" = "true" ] && [ -n "$INTERNAL_CA" ] && [ -f "$INTERNAL_CA" ]; then
+          if ! printf '%s\n' "$SECRET_FILES_OUT" | grep -qE '^internal_ca='; then
+            SECRET_FILES_OUT="$(append_line "$SECRET_FILES_OUT" "internal_ca=${INTERNAL_CA}")"
+          fi
+        fi
+        write_output "secret-files" "$SECRET_FILES_OUT"
+
+    - name: Authenticate Container Registry via docker-login@v1
+      if: ${{ steps.prep.outputs.login-mode == 'action' }}
+      uses: self:gt-dev/actions/docker-login@v1
+      with:
+        registry: ${{ steps.prep.outputs.registry }}
+        username: ${{ steps.prep.outputs.username }}
+        password: ${{ inputs.password }}
+        logout: ${{ inputs.logout }}
+
+    - name: Authenticate Container Registry via Environment Token
+      if: ${{ steps.prep.outputs.login-mode == 'env' }}
+      shell: bash
+      env:
+        TARGET_REGISTRY: ${{ steps.prep.outputs.registry }}
+        TARGET_USERNAME: ${{ steps.prep.outputs.username }}
+      run: |
+        set -euo pipefail
+        TOKEN="${REGISTRY_TOKEN:-${REGISTRY_PUSH_TOKEN:-}}"
+        if [ -z "$TOKEN" ]; then
+          echo "::error::Expected REGISTRY_TOKEN or REGISTRY_PUSH_TOKEN in environment for registry login."
+          exit 1
+        fi
+        printf '%s\n' "$TOKEN" | docker login "$TARGET_REGISTRY" -u "$TARGET_USERNAME" --password-stdin
+        echo "--> [AUTH] Logged in to ${TARGET_REGISTRY} via stdin."
+
+    - name: Build and Push Container Image
+      id: build
+      uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+      env:
+        DOCKER_BUILD_SUMMARY: ${{ inputs.build-summary }}
+        DOCKER_BUILD_RECORD_UPLOAD: ${{ inputs.build-record-upload }}
+      with:
+        add-hosts: ${{ inputs.add-hosts }}
+        annotations: ${{ inputs.annotations }}
+        build-args: ${{ steps.prep.outputs.build-args }}
+        build-contexts: ${{ inputs.build-contexts }}
+        builder: ${{ steps.prep.outputs.builder }}
+        cache-from: ${{ steps.prep.outputs.cache-from }}
+        cache-to: ${{ steps.prep.outputs.cache-to }}
+        context: ${{ inputs.context }}
+        file: ${{ inputs.file }}
+        github-token: ${{ inputs.github-token }}
+        labels: ${{ steps.prep.outputs.labels }}
+        load: ${{ inputs.load }}
+        network: ${{ inputs.network }}
+        no-cache: ${{ inputs.no-cache }}
+        no-cache-filters: ${{ inputs.no-cache-filters }}
+        outputs: ${{ inputs.outputs }}
+        platforms: ${{ inputs.platforms }}
+        provenance: ${{ inputs.provenance }}
+        pull: ${{ inputs.pull }}
+        push: ${{ inputs.push }}
+        sbom: ${{ inputs.sbom }}
+        secret-envs: ${{ inputs.secret-envs }}
+        secret-files: ${{ steps.prep.outputs.secret-files }}
+        secrets: ${{ inputs.secrets }}
+        shm-size: ${{ inputs.shm-size }}
+        ssh: ${{ inputs.ssh }}
+        tags: ${{ inputs.tags }}
+        target: ${{ inputs.target }}
+        ulimit: ${{ inputs.ulimit }}
+
+    - name: Log Out from Container Registry
+      if: ${{ always() && steps.prep.outputs.login-mode == 'env' && inputs.logout == 'true' }}
+      shell: bash
+      env:
+        TARGET_REGISTRY: ${{ steps.prep.outputs.registry }}
+      run: |
+        docker logout "$TARGET_REGISTRY" >/dev/null 2>&1 || true

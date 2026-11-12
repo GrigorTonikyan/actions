@@ -27,7 +27,7 @@ This repository leverages the **Gitea Runner 5.0.0 native `self:` action resolut
 ## Available Actions
 
 ### 1. `setup-toolchains`
-Comprehensive workspace environment setup for Bun, Python, uv (v10), and dependency caching.
+Comprehensive workspace environment setup for Bun (with fast-path detection of pre-baked Bun binaries in container images), Python, `uv` (v10), dynamic internal TLS CA trust (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `CURL_CA_BUNDLE`), dependency caching, and optional `.next/cache` caching for Next.js projects.
 
 ```yaml
 - name: Setup Toolchains
@@ -39,7 +39,13 @@ Comprehensive workspace environment setup for Bun, Python, uv (v10), and depende
     uv-version: "latest" # or pin specific uv version, defaults to pyproject.toml / latest
     python-version: "3.13"
     cache: "true"
+    nextjs-cache: "true" # optional: cache .next/cache across Next.js CI/E2E runs
+    configure-tls-ca: "true"
 ```
+
+**Outputs:**
+- `bun-version`: Resolved Bun version active in `PATH` (from pre-installed binary or `oven-sh/setup-bun`).
+- `bun-skipped`: `"true"` when `oven-sh/setup-bun` was skipped via pre-baked container fast-path.
 
 ### 2. `gitleaks-scan`
 Cryptographically pinned Gitleaks secret scanner.
@@ -130,6 +136,29 @@ Zero-deprecation composite action for uploading pipeline artifacts with automate
 - `artifact-url`: Direct URL to download the uploaded artifact.
 - `artifact-digest`: SHA256 digest of the uploaded artifact bundle.
 
+### 8. `docker-build-push`
+Security-hardened, BuildKit-cached Docker build and push composite action targeting native DinD runners. Enforces default DinD builder usage (`allow-custom-builder: "false"`), disables noisy Buildx summary uploads (`DOCKER_BUILD_SUMMARY=false`, `DOCKER_BUILD_RECORD_UPLOAD=false`), injects `BUILDKIT_INLINE_CACHE=1` and external cache presets (`inline`, `gha`, `registry`, `local`), attaches `org.opencontainers.image.*` labels, exposes runner internal CA certificates as BuildKit secret `id=internal_ca` when present, and optionally handles registry login/logout (`push: "true"`).
+
+```yaml
+- name: Build & Push Image
+  uses: self:gt-dev/actions/docker-build-push@v1
+  with:
+    context: .
+    file: Dockerfile
+    tags: |
+      git.gt-web-dev.com/gt-dev/my-app:sha-${{ github.sha }}
+      git.gt-web-dev.com/gt-dev/my-app:latest
+    push: "true"
+    cache-mode: registry
+    cache-ref: git.gt-web-dev.com/gt-dev/my-app:buildcache
+    password: ${{ secrets.REGISTRY_TOKEN }}
+```
+
+**Outputs:**
+- `imageid`: Built image ID.
+- `digest`: Built image manifest digest.
+- `metadata`: Build result metadata JSON.
+
 ---
 
 ## Container Images
@@ -154,13 +183,36 @@ jobs:
       - run: bun test:e2e
 ```
 
+### `bun-node-alpine` & `node-alpine-runner` Container Images
+Unified pre-baked Alpine Linux builder (`bun-node-alpine`) and minimal production runtime (`node-alpine-runner`) images built from immutable `@sha256:` pinned upstream digests (`containers/bun-node-alpine/VERSIONS`). Eliminates multi-stage `COPY --from` cross-base `node_modules` stalls on ZFS/`overlay2` (`metacopy=off`) filesystems, configures `libc6-compat`, trusts internal CAs when supplied via BuildKit secret `id=internal_ca`, and runs production workloads under non-root `nextjs:nodejs` (`1001:1001`).
+
+- **Registry Image Tags (`bun-node-alpine` builder)**:
+  - `git.gt-web-dev.com/gt-dev/bun-node-alpine:24-1.4` / `22-1.4`
+  - `git.gt-web-dev.com/gt-dev/bun-node-alpine:24.22.3-1.4.4` / `22.23.5-1.4.4`
+  - `git.gt-web-dev.com/gt-dev/bun-node-alpine:latest` (Node 24 LTS + Bun 1.4.4)
+- **Registry Image Tags (`node-alpine-runner` production runtime)**:
+  - `git.gt-web-dev.com/gt-dev/node-alpine-runner:24` / `22`
+  - `git.gt-web-dev.com/gt-dev/node-alpine-runner:24.22.3` / `22.23.5`
+  - `git.gt-web-dev.com/gt-dev/node-alpine-runner:latest` (Node 24 LTS)
+- **SSoT Versioning**: Base versions and `@sha256:` digests are declared in `containers/bun-node-alpine/VERSIONS` and published automatically via `.gitea/workflows/publish-alpine-images.yaml`.
+
+---
+
+## Canonical Reference Templates
+
+The `examples/nextjs/` directory provides copy-ready Next.js + Bun SSoT reference configurations:
+- [`examples/nextjs/Dockerfile`](examples/nextjs/Dockerfile): Single unified `bun-node-alpine` builder (`--mount=type=cache`, `NEXT_TELEMETRY_DISABLED=1`, `output: "standalone"`) paired with `node-alpine-runner`.
+- [`examples/nextjs/.dockerignore`](examples/nextjs/.dockerignore): Baseline exclusions preventing `.git`, `.next`, `node_modules`, and `.env*` bloat in Docker build contexts.
+- [`examples/nextjs/next.config.ts`](examples/nextjs/next.config.ts): Minimal `output: "standalone"` configuration.
+- [`examples/nextjs/.gitea/workflows/ci.yaml`](examples/nextjs/.gitea/workflows/ci.yaml) & [`deploy.yaml`](examples/nextjs/.gitea/workflows/deploy.yaml): Example `pull_request` validation (with `.next/cache` caching) and `main` DinD `docker-build-push@v1` build/push workflows.
+
 ---
 
 ## Quality Gates & Validation
 
-Every pull request and push to `main` undergoes automated validation via `.gitea/workflows/validate.yaml`:
+Every pull request and manual dispatch undergoes automated validation via `.gitea/workflows/validate.yaml`:
 1. **Gitleaks Secret Scan**: Enforces zero credentials or tokens in repository code.
-2. **Action Manifest & SSoT Validation** (`scripts/validate-actions.sh`): Verifies required keys, zero-warning compliance, version file semver integrity, TLS trust configuration, and Dockerfile ARG parity.
+2. **Action Manifest, Container & Workflow Validation** (`scripts/validate-actions.sh`): Verifies required keys, SHA-pinned upstream actions, `@sha256:` pinned container digests, `.dockerignore` coverage, `CWE-78` input-binding safety, zero-warning/pure-ASCII compliance, SSoT version integrity, and non-redundant workflow triggers.
 3. **PR Quality & Merge Gate**: Required status check blocking merges until all checks pass.
 
 ---

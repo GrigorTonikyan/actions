@@ -10,7 +10,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -23,18 +23,46 @@ jobs:
     steps:
       - name: Checkout Code
         uses: builtin:checkout
+        with:
+          fetch-depth: 1
 
-      - name: Resolve Playwright Version SSoT
-        id: version
+      - name: Resolve Playwright Version & Registry Tags
+        id: meta
         shell: bash
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
         run: |
+          set -euo pipefail
           if [ ! -f "containers/playwright/PLAYWRIGHT_VERSION" ]; then
             echo "::error::containers/playwright/PLAYWRIGHT_VERSION not found!"
             exit 1
           fi
-          PW_VER=$(tr -d ' \r\n' < containers/playwright/PLAYWRIGHT_VERSION)
-          echo "version=${PW_VER}" >> $GITHUB_OUTPUT
-          echo "--> Resolved Playwright Container Version SSoT: ${PW_VER}"
+          if [ ! -f "containers/playwright/PLAYWRIGHT_DIGEST" ]; then
+            echo "::error::containers/playwright/PLAYWRIGHT_DIGEST not found!"
+            exit 1
+          fi
+          PW_VER="$(tr -d ' \r\n' < containers/playwright/PLAYWRIGHT_VERSION)"
+          PW_DIGEST="$(tr -d ' \r\n' < containers/playwright/PLAYWRIGHT_DIGEST)"
+
+          REGISTRY_HOST="${GITHUB_SERVER_URL#https://}"
+          REGISTRY_HOST="${REGISTRY_HOST#http://}"
+          REGISTRY_HOST="${REGISTRY_HOST%%/*}"
+          IMAGE_BASE="${REGISTRY_HOST}/${REPO_OWNER}/playwright-runner"
+
+          echo "version=${PW_VER}" >> "$GITHUB_OUTPUT"
+          echo "digest=${PW_DIGEST}" >> "$GITHUB_OUTPUT"
+          {
+            echo "tags<<EOF_TAGS"
+            echo "${IMAGE_BASE}:latest"
+            echo "${IMAGE_BASE}:v${PW_VER}"
+            echo "${IMAGE_BASE}:${PW_VER}"
+            echo "EOF_TAGS"
+            echo "build-args<<EOF_ARGS"
+            echo "PLAYWRIGHT_VERSION=${PW_VER}"
+            echo "PLAYWRIGHT_IMAGE_DIGEST=${PW_DIGEST}"
+            echo "EOF_ARGS"
+          } >> "$GITHUB_OUTPUT"
+          echo "[INFO] Resolved Playwright Container SSoT: ${PW_VER} (${PW_DIGEST})"
 
       - name: Validate Registry Credentials
         shell: bash
@@ -45,31 +73,23 @@ jobs:
             echo "::error::Secret REGISTRY_TOKEN is not configured! Gitea Actions requires a personal access token with write:package scope."
             exit 1
           fi
-          echo "--> [OK] REGISTRY_TOKEN secret present."
+          echo "[PASS] REGISTRY_TOKEN secret present."
 
-      - name: Log in to Private Gitea Container Registry
-        uses: self:gt-dev/actions/docker-login@v1
+      - name: Build and Push Playwright Runner Image
+        id: publish
+        uses: ./docker-build-push
         with:
-          registry: git.gt-web-dev.com
-          username: ${{ github.repository_owner }}
+          context: ./containers/playwright
+          file: ./containers/playwright/Dockerfile
+          push: "true"
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: ${{ steps.meta.outputs.build-args }}
           password: ${{ secrets.REGISTRY_TOKEN }}
 
-      - name: Build Playwright Runner Image
+      - name: Report Published Digest
         shell: bash
+        env:
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+          PW_VER: ${{ steps.meta.outputs.version }}
         run: |
-          echo "--> Building Playwright runner image for version ${{ steps.version.outputs.version }}..."
-          docker build \
-            --build-arg PLAYWRIGHT_VERSION=${{ steps.version.outputs.version }} \
-            -t git.gt-web-dev.com/gt-dev/playwright-runner:latest \
-            -t git.gt-web-dev.com/gt-dev/playwright-runner:v${{ steps.version.outputs.version }} \
-            -t git.gt-web-dev.com/gt-dev/playwright-runner:${{ steps.version.outputs.version }} \
-            ./containers/playwright
-
-      - name: Push Playwright Runner Image
-        shell: bash
-        run: |
-          echo "--> Pushing image tags to private container registry via local zero-trust loopback..."
-          docker push git.gt-web-dev.com/gt-dev/playwright-runner:latest
-          docker push git.gt-web-dev.com/gt-dev/playwright-runner:v${{ steps.version.outputs.version }}
-          docker push git.gt-web-dev.com/gt-dev/playwright-runner:${{ steps.version.outputs.version }}
-          echo "--> [SUCCESS] Playwright runner image published successfully."
+          echo "[PASS] Playwright runner ${PW_VER} published (digest: ${IMAGE_DIGEST:-unknown})."

@@ -1,10 +1,9 @@
 name: Actions & Image Validation
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,11 +16,14 @@ jobs:
     steps:
       - name: Checkout Code
         uses: builtin:checkout
+        with:
+          fetch-depth: 1
 
       - name: Gitleaks Secret Scan
         uses: self:gt-dev/actions/gitleaks-scan@v1
         with:
           source: "."
+          redact: "true"
 
       - name: Validate Action Manifests & SSoT Versions
         shell: bash
@@ -30,8 +32,16 @@ jobs:
   ci-gate:
     name: PR Quality & Merge Gate
     runs-on: ubuntu-latest
+    if: always()
     needs: [validate]
     steps:
       - name: Verify Quality Gate
         shell: bash
-        run: echo "--> [OK] All actions and container validation checks passed successfully."
+        env:
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+        run: |
+          if [ "$VALIDATE_RESULT" != "success" ]; then
+            echo "[FAIL] Actions validation job did not succeed (status: ${VALIDATE_RESULT})."
+            exit 1
+          fi
+          echo "[PASS] All actions and container validation checks passed successfully."
