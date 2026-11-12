@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        node_major: ["24", "22"]
+        node_major: ["26", "24"]
     steps:
       - name: Checkout Code
         uses: builtin:checkout
@@ -48,9 +48,9 @@ jobs:
           source "$VERSIONS_FILE"
 
           case "$NODE_MAJOR" in
-            22)
-              NODE_VER="$NODE22_VERSION"
-              NODE_IMG="$NODE22_IMAGE"
+            26)
+              NODE_VER="$NODE26_VERSION"
+              NODE_IMG="$NODE26_IMAGE"
               ;;
             24)
               NODE_VER="$NODE24_VERSION"

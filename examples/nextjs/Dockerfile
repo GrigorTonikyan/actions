@@ -6,12 +6,12 @@
 #
 # Once your org publishes bun-node-alpine / node-alpine-runner, you can swap the
 # base stages below to:
-#   FROM git.gt-web-dev.com/gt-dev/bun-node-alpine:24-1.4@sha256:<PUBLISHED_DIGEST> AS builder
-#   FROM git.gt-web-dev.com/gt-dev/node-alpine-runner:24@sha256:<PUBLISHED_DIGEST> AS runner
+#   FROM git.gt-web-dev.com/gt-dev/bun-node-alpine:26-1.4@sha256:<PUBLISHED_DIGEST> AS builder
+#   FROM git.gt-web-dev.com/gt-dev/node-alpine-runner:26@sha256:<PUBLISHED_DIGEST> AS runner
 
 FROM oven/bun:1.4.4-alpine@sha256:4cf82f5686b196504fe119db3fcd9185b191f82ece82c40680e597228ec6070a AS bun-source
 
-FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS builder
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS builder
 WORKDIR /app
 
 # Install musl compatibility and optionally trust internal CI registry CA cleanly
@@ -46,7 +46,7 @@ RUN --mount=type=cache,id=nextjs-cache,target=/app/.next/cache,sharing=locked \
     node ./node_modules/next/dist/bin/next build
 
 # 3. Minimal non-root production runner
-FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS runner
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS runner
 WORKDIR /app
 
 RUN apk add --no-cache libc6-compat ca-certificates && \

@@ -4,7 +4,7 @@
 # - runner:  Minimal Node.js LTS Alpine runtime (libc6-compat, CA trust, non-root nextjs:nodejs 1001:1001)
 # - builder: Unified Node.js LTS + pinned Bun Alpine image (eliminates cross-stage node_modules copy on ZFS/overlay2)
 
-ARG NODE_IMAGE=node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5
+ARG NODE_IMAGE=node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5
 ARG BUN_IMAGE=oven/bun:1.4.4-alpine@sha256:4cf82f5686b196504fe119db3fcd9185b191f82ece82c40680e597228ec6070a
 
 FROM ${BUN_IMAGE} AS bun-source

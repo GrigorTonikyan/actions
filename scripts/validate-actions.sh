@@ -283,10 +283,26 @@ if [ ! -f "$ALPINE_VERSIONS" ]; then
 else
   # shellcheck source=containers/bun-node-alpine/VERSIONS
   source "$ALPINE_VERSIONS"
+  if [ "${DEFAULT_NODE_MAJOR:-}" != "26" ]; then
+    echo "::error file=$ALPINE_VERSIONS::DEFAULT_NODE_MAJOR must track active LTS major '26' (found '${DEFAULT_NODE_MAJOR:-unset}')"
+    FAILED=1
+  fi
+  if ! printf '%s\n' "${NODE26_IMAGE:-}" | grep -qE '@sha256:[0-9a-f]{64}$'; then
+    echo "::error file=$ALPINE_VERSIONS::NODE26_IMAGE must be pinned to an immutable @sha256: digest"
+    FAILED=1
+  fi
+  if ! printf '%s\n' "${NODE24_IMAGE:-}" | grep -qE '@sha256:[0-9a-f]{64}$'; then
+    echo "::error file=$ALPINE_VERSIONS::NODE24_IMAGE must be pinned to an immutable @sha256: digest"
+    FAILED=1
+  fi
+  if grep -rnE "node:(16|18|20|22|23|25)-alpine|NODE(16|18|20|22|23|25)_" containers examples .gitea/workflows 2>/dev/null; then
+    echo "::error::Outdated or EOL Node.js version reference detected (allowed LTS majors: 26 Active LTS, 24 Maintenance LTS)"
+    FAILED=1
+  fi
   check_dockerfile_invariants "$ALPINE_DOCKERFILE"
   if [ -f "$ALPINE_DOCKERFILE" ]; then
-    if ! grep -q "ARG NODE_IMAGE=${NODE24_IMAGE}" "$ALPINE_DOCKERFILE"; then
-      echo "::error file=$ALPINE_DOCKERFILE::Default ARG NODE_IMAGE does not match NODE24_IMAGE in VERSIONS"
+    if ! grep -q "ARG NODE_IMAGE=${NODE26_IMAGE}" "$ALPINE_DOCKERFILE"; then
+      echo "::error file=$ALPINE_DOCKERFILE::Default ARG NODE_IMAGE does not match NODE26_IMAGE in VERSIONS"
       FAILED=1
     fi
     if ! grep -q "ARG BUN_IMAGE=${BUN_IMAGE}" "$ALPINE_DOCKERFILE"; then
@@ -297,7 +313,7 @@ else
       echo "::error file=$ALPINE_DOCKERFILE::Dockerfile must define both 'runner' and 'builder' stages"
       FAILED=1
     fi
-    echo "    Verified Alpine builder/runner SSoT (Node ${NODE24_VERSION}/${NODE22_VERSION} + Bun ${BUN_VERSION})."
+    echo "    Verified Alpine builder/runner SSoT (Node ${NODE26_VERSION} Active LTS/${NODE24_VERSION} LTS + Bun ${BUN_VERSION})."
   fi
 fi
 
@@ -349,6 +365,10 @@ if [ -f "examples/nextjs/Dockerfile" ]; then
   fi
   if ! grep -q "mount=type=cache" "examples/nextjs/Dockerfile"; then
     echo "::error file=examples/nextjs/Dockerfile::Reference Dockerfile must demonstrate BuildKit cache mounts"
+    FAILED=1
+  fi
+  if [ -n "${NODE26_IMAGE:-}" ] && ! grep -q "FROM ${NODE26_IMAGE}" "examples/nextjs/Dockerfile"; then
+    echo "::error file=examples/nextjs/Dockerfile::Reference Dockerfile must use Active LTS NODE26_IMAGE (${NODE26_IMAGE})"
     FAILED=1
   fi
 fi
