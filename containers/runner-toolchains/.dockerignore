@@ -1,0 +1,6 @@
+# No local build context files are required by this Dockerfile.
+.git
+.env
+.env.*
+node_modules
+*

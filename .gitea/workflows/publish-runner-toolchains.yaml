@@ -1,0 +1,100 @@
+name: Publish Enterprise Toolchain Runner Image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "containers/runner-toolchains/**"
+      - ".gitea/workflows/publish-runner-toolchains.yaml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-publish:
+    name: Build & Publish Enterprise Toolchain Runner Container
+    runs-on: highperf
+    steps:
+      - name: Checkout Code
+        uses: builtin:checkout
+        with:
+          fetch-depth: 1
+
+      - name: Resolve Toolchain Runner SSoT Versions & Tags
+        id: meta
+        shell: bash
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          VERSIONS_FILE="containers/runner-toolchains/VERSIONS"
+          if [ ! -f "$VERSIONS_FILE" ]; then
+            echo "::error::${VERSIONS_FILE} not found!"
+            exit 1
+          fi
+
+          # shellcheck source=containers/runner-toolchains/VERSIONS
+          source "$VERSIONS_FILE"
+
+          REGISTRY_HOST="${GITHUB_SERVER_URL#https://}"
+          REGISTRY_HOST="${REGISTRY_HOST#http://}"
+          REGISTRY_HOST="${REGISTRY_HOST%%/*}"
+          IMAGE_BASE="${REGISTRY_HOST}/${REPO_OWNER}/runner-toolchains"
+
+          echo "version=${RUNNER_TOOLCHAINS_VERSION}" >> "$GITHUB_OUTPUT"
+          {
+            echo "tags<<EOF_TAGS"
+            echo "${IMAGE_BASE}:latest"
+            echo "${IMAGE_BASE}:v${RUNNER_TOOLCHAINS_VERSION}"
+            echo "${IMAGE_BASE}:${RUNNER_TOOLCHAINS_VERSION}"
+            echo "EOF_TAGS"
+            echo "build-args<<EOF_ARGS"
+            echo "RUNNER_TOOLCHAINS_VERSION=${RUNNER_TOOLCHAINS_VERSION}"
+            echo "PLAYWRIGHT_VERSION=${PLAYWRIGHT_VERSION}"
+            echo "PLAYWRIGHT_IMAGE_DIGEST=${PLAYWRIGHT_IMAGE_DIGEST}"
+            echo "PLAYWRIGHT_BASE_IMAGE=${PLAYWRIGHT_BASE_IMAGE}"
+            echo "BUN_VERSION=${BUN_VERSION}"
+            echo "UV_VERSION=${UV_VERSION}"
+            echo "PYTHON_VERSION=${PYTHON_VERSION}"
+            echo "RUST_DEFAULT_TOOLCHAIN=${RUST_DEFAULT_TOOLCHAIN}"
+            echo "RUST_NIGHTLY_TOOLCHAIN=${RUST_NIGHTLY_TOOLCHAIN}"
+            echo "EOF_ARGS"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "[INFO] Resolved runner-toolchains SSoT v${RUNNER_TOOLCHAINS_VERSION} (Bun ${BUN_VERSION}, uv ${UV_VERSION}, Python ${PYTHON_VERSION}, Rust ${RUST_DEFAULT_TOOLCHAIN}/${RUST_NIGHTLY_TOOLCHAIN}, Playwright ${PLAYWRIGHT_VERSION})"
+
+      - name: Validate Registry Credentials
+        shell: bash
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$REGISTRY_TOKEN" ]; then
+            echo "::error::Secret REGISTRY_TOKEN is not configured! Gitea Actions requires a personal access token with write:package scope."
+            exit 1
+          fi
+          echo "[PASS] REGISTRY_TOKEN secret present."
+
+      - name: Build and Push Enterprise Toolchain Runner Image
+        id: publish
+        uses: ./docker-build-push
+        with:
+          context: ./containers/runner-toolchains
+          file: ./containers/runner-toolchains/Dockerfile
+          push: "true"
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: ${{ steps.meta.outputs.build-args }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Report Published Digest
+        shell: bash
+        env:
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+          RT_VER: ${{ steps.meta.outputs.version }}
+        run: |
+          echo "[PASS] runner-toolchains v${RT_VER} published (digest: ${IMAGE_DIGEST:-unknown})."

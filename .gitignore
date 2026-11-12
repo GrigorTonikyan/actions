@@ -1,0 +1,19 @@
+# Environment & secret files
+.env
+.env.*
+!.env.example
+*.token
+*.secret
+*.key
+*.pem
+*.p12
+*.pfx
+credentials.json
+
+# OS & editor artifacts
+.DS_Store
+Thumbs.db
+*.log
+.logs/
+node_modules/
+dist/
