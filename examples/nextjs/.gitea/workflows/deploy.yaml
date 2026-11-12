@@ -1,0 +1,69 @@
+name: Production Continuous Delivery
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    name: Build & Push Production Image
+    runs-on: ubuntu-latest-12-cores
+    steps:
+      - name: Checkout Repository
+        uses: builtin:checkout
+        with:
+          fetch-depth: 1
+
+      - name: Resolve Version & Image Tags
+        id: meta
+        shell: bash
+        env:
+          REPO_FULL: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          APP_VER="$(node -p "require('./package.json').version")"
+          REGISTRY_HOST="${GITHUB_SERVER_URL#https://}"
+          REGISTRY_HOST="${REGISTRY_HOST#http://}"
+          REGISTRY_HOST="${REGISTRY_HOST%%/*}"
+          IMAGE_BASE="${REGISTRY_HOST}/${REPO_FULL}"
+
+          echo "version=${APP_VER}" >> "$GITHUB_OUTPUT"
+          {
+            echo "tags<<EOF_TAGS"
+            echo "${IMAGE_BASE}:${APP_VER}"
+            echo "${IMAGE_BASE}:sha-${COMMIT_SHA}"
+            echo "${IMAGE_BASE}:latest"
+            echo "EOF_TAGS"
+          } >> "$GITHUB_OUTPUT"
+          echo "[INFO] Target production image: ${IMAGE_BASE}:${APP_VER}"
+
+      - name: Build and Push Production Container
+        uses: self:gt-dev/actions/docker-build-push@v1
+        with:
+          context: .
+          push: "true"
+          tags: ${{ steps.meta.outputs.tags }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+  deploy:
+    name: PaaS Deployment Trigger
+    needs: [build-and-push]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Deployment Webhook
+        shell: bash
+        env:
+          DEPLOY_WEBHOOK: ${{ secrets.COOLIFY_DEPLOY_WEBHOOK }}
+        run: |
+          if [ -n "$DEPLOY_WEBHOOK" ]; then
+            echo "[INFO] Triggering Coolify deployment via webhook..."
+            curl -fsSL -X POST "$DEPLOY_WEBHOOK"
+          else
+            echo "[INFO] Deployment managed via registered Gitea push webhook."
+          fi

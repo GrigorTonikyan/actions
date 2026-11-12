@@ -1,0 +1,134 @@
+name: CI & PR Quality Gate
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security-scan:
+    name: Gitleaks Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: builtin:checkout
+        with:
+          fetch-depth: 0
+
+      - name: Scan Repository Secrets
+        uses: self:gt-dev/actions/gitleaks-scan@v1
+        with:
+          redact: "true"
+
+  lint-and-test:
+    name: Lint, Typecheck & Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: builtin:checkout
+        with:
+          fetch-depth: 1
+
+      - name: Setup Toolchains
+        uses: self:gt-dev/actions/setup-toolchains@v1
+        with:
+          bun: "true"
+          cache: "true"
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify Formatting, Linting & Types
+        run: bunx vp check
+
+      - name: Run Unit Tests
+        run: bun run test
+
+      - name: Setup CDDM Binary
+        uses: self:gt-dev/actions/setup-cddm@v1
+
+      - name: Verify Architectural Rules
+        run: cddm rules check --rules .cddmrules.toml
+
+  e2e-tests:
+    name: Playwright E2E Tests
+    runs-on: ubuntu-latest
+    container:
+      image: git.gt-web-dev.com/gt-dev/playwright-runner:v1.65.0
+    steps:
+      - name: Checkout Repository
+        uses: builtin:checkout
+        with:
+          fetch-depth: 1
+
+      - name: Setup Toolchains & Next.js Cache (Pre-Baked Fast Path)
+        uses: self:gt-dev/actions/setup-toolchains@v1
+        with:
+          bun: "true"
+          cache: "true"
+          nextjs-cache: "true"
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build Next.js Application
+        run: bun run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+      - name: Run Playwright E2E Tests
+        run: bun run test:e2e
+        env:
+          CI: "1"
+
+      - name: Upload Playwright Failure Artifacts
+        if: failure()
+        uses: self:gt-dev/actions/upload-artifact@v1
+        with:
+          name: playwright-failure-artifacts
+          path: |
+            playwright-report/
+            test-results/
+
+  build-validation:
+    name: Build Production Image (Validation)
+    needs: [security-scan, lint-and-test, e2e-tests]
+    runs-on: ubuntu-latest-12-cores
+    steps:
+      - name: Checkout Repository
+        uses: builtin:checkout
+        with:
+          fetch-depth: 1
+
+      - name: Validate Container Build
+        uses: self:gt-dev/actions/docker-build-push@v1
+        with:
+          context: .
+          push: "false"
+
+  pr-merge-gate:
+    name: PR Quality & Merge Gate
+    if: always()
+    needs: [security-scan, lint-and-test, e2e-tests, build-validation]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate Upstream Quality Gates
+        shell: bash
+        env:
+          SEC_RESULT: ${{ needs.security-scan.result }}
+          LINT_RESULT: ${{ needs.lint-and-test.result }}
+          E2E_RESULT: ${{ needs.e2e-tests.result }}
+          BUILD_RESULT: ${{ needs.build-validation.result }}
+        run: |
+          if [ "$SEC_RESULT" != "success" ] || \
+             [ "$LINT_RESULT" != "success" ] || \
+             [ "$E2E_RESULT" != "success" ] || \
+             [ "$BUILD_RESULT" != "success" ]; then
+            echo "[FAIL] One or more required quality gates did not pass."
+            exit 1
+          fi
+          echo "[PASS] All PR quality gates passed."

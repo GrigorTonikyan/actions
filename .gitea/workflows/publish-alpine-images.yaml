@@ -1,0 +1,140 @@
+name: Publish Alpine Builder & Runner Images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "containers/bun-node-alpine/**"
+      - ".gitea/workflows/publish-alpine-images.yaml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-publish:
+    name: Build & Publish Alpine Base Images (Node ${{ matrix.node_major }})
+    runs-on: highperf
+    strategy:
+      fail-fast: true
+      matrix:
+        node_major: ["24", "22"]
+    steps:
+      - name: Checkout Code
+        uses: builtin:checkout
+        with:
+          fetch-depth: 1
+
+      - name: Resolve Alpine Base SSoT Versions & Tags
+        id: meta
+        shell: bash
+        env:
+          NODE_MAJOR: ${{ matrix.node_major }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          VERSIONS_FILE="containers/bun-node-alpine/VERSIONS"
+          if [ ! -f "$VERSIONS_FILE" ]; then
+            echo "::error::${VERSIONS_FILE} not found!"
+            exit 1
+          fi
+
+          # shellcheck source=containers/bun-node-alpine/VERSIONS
+          source "$VERSIONS_FILE"
+
+          case "$NODE_MAJOR" in
+            22)
+              NODE_VER="$NODE22_VERSION"
+              NODE_IMG="$NODE22_IMAGE"
+              ;;
+            24)
+              NODE_VER="$NODE24_VERSION"
+              NODE_IMG="$NODE24_IMAGE"
+              ;;
+            *)
+              echo "::error::Unsupported matrix node_major '${NODE_MAJOR}'."
+              exit 1
+              ;;
+          esac
+
+          REGISTRY_HOST="${GITHUB_SERVER_URL#https://}"
+          REGISTRY_HOST="${REGISTRY_HOST#http://}"
+          REGISTRY_HOST="${REGISTRY_HOST%%/*}"
+
+          BUILDER_REPO="${REGISTRY_HOST}/${REPO_OWNER}/bun-node-alpine"
+          RUNNER_REPO="${REGISTRY_HOST}/${REPO_OWNER}/node-alpine-runner"
+
+          {
+            echo "builder-tags<<EOF_BTAGS"
+            echo "${BUILDER_REPO}:${NODE_MAJOR}-${BUN_MINOR}"
+            echo "${BUILDER_REPO}:${NODE_VER}-${BUN_VERSION}"
+            if [ "$NODE_MAJOR" = "$DEFAULT_NODE_MAJOR" ]; then
+              echo "${BUILDER_REPO}:latest"
+            fi
+            echo "EOF_BTAGS"
+
+            echo "runner-tags<<EOF_RTAGS"
+            echo "${RUNNER_REPO}:${NODE_MAJOR}"
+            echo "${RUNNER_REPO}:${NODE_VER}"
+            if [ "$NODE_MAJOR" = "$DEFAULT_NODE_MAJOR" ]; then
+              echo "${RUNNER_REPO}:latest"
+            fi
+            echo "EOF_RTAGS"
+
+            echo "build-args<<EOF_ARGS"
+            echo "NODE_IMAGE=${NODE_IMG}"
+            echo "BUN_IMAGE=${BUN_IMAGE}"
+            echo "EOF_ARGS"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "[INFO] Node ${NODE_VER} (${NODE_IMG}) + Bun ${BUN_VERSION} (${BUN_IMAGE})"
+
+      - name: Validate Registry Credentials
+        shell: bash
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$REGISTRY_TOKEN" ]; then
+            echo "::error::Secret REGISTRY_TOKEN is not configured! Gitea Actions requires a personal access token with write:package scope."
+            exit 1
+          fi
+          echo "[PASS] REGISTRY_TOKEN secret present."
+
+      - name: Build and Push Unified Builder Image (bun-node-alpine)
+        id: publish_builder
+        uses: ./docker-build-push
+        with:
+          context: ./containers/bun-node-alpine
+          file: ./containers/bun-node-alpine/Dockerfile
+          target: builder
+          push: "true"
+          tags: ${{ steps.meta.outputs.builder-tags }}
+          build-args: ${{ steps.meta.outputs.build-args }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Build and Push Minimal Runner Image (node-alpine-runner)
+        id: publish_runner
+        uses: ./docker-build-push
+        with:
+          context: ./containers/bun-node-alpine
+          file: ./containers/bun-node-alpine/Dockerfile
+          target: runner
+          push: "true"
+          tags: ${{ steps.meta.outputs.runner-tags }}
+          build-args: ${{ steps.meta.outputs.build-args }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Report Published Digests
+        shell: bash
+        env:
+          NODE_MAJOR: ${{ matrix.node_major }}
+          BUILDER_DIGEST: ${{ steps.publish_builder.outputs.digest }}
+          RUNNER_DIGEST: ${{ steps.publish_runner.outputs.digest }}
+        run: |
+          echo "[PASS] Published Node ${NODE_MAJOR} bun-node-alpine digest: ${BUILDER_DIGEST:-unknown}"
+          echo "[PASS] Published Node ${NODE_MAJOR} node-alpine-runner digest: ${RUNNER_DIGEST:-unknown}"
