@@ -187,13 +187,13 @@ jobs:
 Unified pre-baked Alpine Linux builder (`bun-node-alpine`) and minimal production runtime (`node-alpine-runner`) images built from immutable `@sha256:` pinned upstream digests (`containers/bun-node-alpine/VERSIONS`). Eliminates multi-stage `COPY --from` cross-base `node_modules` stalls on ZFS/`overlay2` (`metacopy=off`) filesystems, configures `libc6-compat`, trusts internal CAs when supplied via BuildKit secret `id=internal_ca`, and runs production workloads under non-root `nextjs:nodejs` (`1001:1001`).
 
 - **Registry Image Tags (`bun-node-alpine` builder)**:
-  - `git.gt-web-dev.com/gt-dev/bun-node-alpine:24-1.4` / `22-1.4`
-  - `git.gt-web-dev.com/gt-dev/bun-node-alpine:24.22.3-1.4.4` / `22.23.5-1.4.4`
-  - `git.gt-web-dev.com/gt-dev/bun-node-alpine:latest` (Node 24 LTS + Bun 1.4.4)
+  - `git.gt-web-dev.com/gt-dev/bun-node-alpine:26-1.4` / `24-1.4`
+  - `git.gt-web-dev.com/gt-dev/bun-node-alpine:26.13.1-1.4.4` / `24.22.3-1.4.4`
+  - `git.gt-web-dev.com/gt-dev/bun-node-alpine:latest` (Node 26 Active LTS + Bun 1.4.4)
 - **Registry Image Tags (`node-alpine-runner` production runtime)**:
-  - `git.gt-web-dev.com/gt-dev/node-alpine-runner:24` / `22`
-  - `git.gt-web-dev.com/gt-dev/node-alpine-runner:24.22.3` / `22.23.5`
-  - `git.gt-web-dev.com/gt-dev/node-alpine-runner:latest` (Node 24 LTS)
+  - `git.gt-web-dev.com/gt-dev/node-alpine-runner:26` / `24`
+  - `git.gt-web-dev.com/gt-dev/node-alpine-runner:26.13.1` / `24.22.3`
+  - `git.gt-web-dev.com/gt-dev/node-alpine-runner:latest` (Node 26 Active LTS)
 - **SSoT Versioning**: Base versions and `@sha256:` digests are declared in `containers/bun-node-alpine/VERSIONS` and published automatically via `.gitea/workflows/publish-alpine-images.yaml`.
 
 ---
