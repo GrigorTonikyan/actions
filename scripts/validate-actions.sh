@@ -220,6 +220,14 @@ for action_file in $ACTION_FILES; do
       echo "::error file=$action_file::setup-toolchains must detect pre-installed Bun fast-path"
       FAILED=1
     fi
+    if ! grep -q "detect-python-uv" "$action_file"; then
+      echo "::error file=$action_file::setup-toolchains must detect pre-installed Python and Astral uv fast-path"
+      FAILED=1
+    fi
+    if ! grep -q "detect-rust" "$action_file"; then
+      echo "::error file=$action_file::setup-toolchains must detect pre-installed Rust toolchain fast-path"
+      FAILED=1
+    fi
   elif [[ "$action_file" == *"docker-build-push"* ]]; then
     if ! grep -q "DOCKER_BUILD_SUMMARY" "$action_file" || ! grep -q "DOCKER_BUILD_RECORD_UPLOAD" "$action_file"; then
       echo "::error file=$action_file::docker-build-push must configure DOCKER_BUILD_SUMMARY and DOCKER_BUILD_RECORD_UPLOAD"
@@ -354,6 +362,34 @@ else
     fi
     echo "    Verified Alpine builder/runner SSoT (Node ${NODE26_VERSION} Active LTS/${NODE24_VERSION} LTS + Bun ${BUN_VERSION})."
   fi
+fi
+
+RT_VERSIONS="containers/runner-toolchains/VERSIONS"
+RT_DOCKERFILE="containers/runner-toolchains/Dockerfile"
+if [ ! -f "$RT_VERSIONS" ] || [ ! -f "$RT_DOCKERFILE" ]; then
+  echo "::error::Missing $RT_VERSIONS or $RT_DOCKERFILE"
+  FAILED=1
+else
+  # shellcheck source=containers/runner-toolchains/VERSIONS
+  source "$RT_VERSIONS"
+  check_dockerfile_invariants "$RT_DOCKERFILE"
+  if ! printf '%s\n' "${PLAYWRIGHT_BASE_IMAGE:-}" | grep -qE '@sha256:[0-9a-f]{64}$'; then
+    echo "::error file=$RT_VERSIONS::PLAYWRIGHT_BASE_IMAGE must be pinned to an immutable @sha256: digest"
+    FAILED=1
+  fi
+  if ! grep -q "ARG PLAYWRIGHT_BASE_IMAGE=${PLAYWRIGHT_BASE_IMAGE}" "$RT_DOCKERFILE"; then
+    echo "::error file=$RT_DOCKERFILE::Default ARG PLAYWRIGHT_BASE_IMAGE does not match PLAYWRIGHT_BASE_IMAGE in $RT_VERSIONS"
+    FAILED=1
+  fi
+  if ! grep -q "force-unsafe-io" "$RT_DOCKERFILE"; then
+    echo "::error file=$RT_DOCKERFILE::Dockerfile must configure dpkg force-unsafe-io"
+    FAILED=1
+  fi
+  if ! grep -q "gt-runner-toolchains" "$RT_DOCKERFILE"; then
+    echo "::error file=$RT_DOCKERFILE::Dockerfile must write /etc/gt-runner-toolchains manifest"
+    FAILED=1
+  fi
+  echo "    Verified Enterprise Toolchain Runner SSoT (v${RUNNER_TOOLCHAINS_VERSION}, Bun ${BUN_VERSION}, uv ${UV_VERSION}, Python ${PYTHON_VERSION}, Rust ${RUST_DEFAULT_TOOLCHAIN}/${RUST_NIGHTLY_TOOLCHAIN})."
 fi
 
 # 4. Validate Workflows & Reference Next.js Templates

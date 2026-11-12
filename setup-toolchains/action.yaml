@@ -1,5 +1,5 @@
 name: "Setup Forge Workspace Toolchains"
-description: "Unified composite action for Bun (with pre-baked container fast-path), Python, uv, TLS CA trust, and dependency/Next.js caching in Gitea Actions"
+description: "Unified composite action for Bun, Python, uv, and Rust (with pre-baked container fast-paths), TLS CA trust, and dependency/Next.js caching in Gitea Actions"
 inputs:
   bun:
     description: "Install and configure Bun environment"
@@ -10,7 +10,7 @@ inputs:
     required: false
     default: "latest"
   uv:
-    description: "Install and configure Astral uv"
+    description: "Install and configure Astral uv and Python"
     required: false
     default: "false"
   uv-version:
@@ -21,6 +21,26 @@ inputs:
     description: "Python version to install (if uv/python requested)"
     required: false
     default: "3.13"
+  rust:
+    description: "Install and configure Rust toolchain (rustc, cargo, rustup)"
+    required: false
+    default: "false"
+  rust-toolchain:
+    description: "Rust toolchain channel or version to activate (e.g., stable, nightly, 1.85.0)"
+    required: false
+    default: "stable"
+  rust-components:
+    description: "Comma-separated Rust components to ensure installed (e.g., rustfmt,clippy)"
+    required: false
+    default: "rustfmt,clippy"
+  rust-targets:
+    description: "Optional comma-separated Rust compilation targets"
+    required: false
+    default: ""
+  cargo-cache:
+    description: "Enable Cargo registry and git dependency caching when rust=true and cache=true"
+    required: false
+    default: "true"
   cache:
     description: "Enable dependency caching"
     required: false
@@ -49,6 +69,27 @@ outputs:
   bun-skipped:
     description: "Whether oven-sh/setup-bun was skipped due to pre-installed Bun detection"
     value: ${{ steps.detect-bun.outputs.skip }}
+  uv-version:
+    description: "Resolved Astral uv version active in PATH"
+    value: ${{ steps.detect-python-uv.outputs.skip-uv == 'true' && steps.detect-python-uv.outputs.uv-version || steps.setup-uv.outputs.uv-version }}
+  uv-skipped:
+    description: "Whether astral-sh/setup-uv was skipped due to pre-installed uv detection"
+    value: ${{ steps.detect-python-uv.outputs.skip-uv }}
+  python-version:
+    description: "Resolved Python version active in PATH"
+    value: ${{ steps.detect-python-uv.outputs.skip-python == 'true' && steps.detect-python-uv.outputs.python-version || steps.setup-python.outputs.python-version }}
+  python-skipped:
+    description: "Whether actions/setup-python was skipped due to pre-installed Python detection"
+    value: ${{ steps.detect-python-uv.outputs.skip-python }}
+  rust-version:
+    description: "Resolved Rustc version active in PATH"
+    value: ${{ steps.detect-rust.outputs.skip == 'true' && steps.detect-rust.outputs.version || steps.setup-rust.outputs.version }}
+  rust-skipped:
+    description: "Whether rustup installation was skipped due to pre-installed Rust toolchain detection"
+    value: ${{ steps.detect-rust.outputs.skip }}
+  prebaked-container:
+    description: "Whether execution inside a pre-baked enterprise container image was detected"
+    value: ${{ steps.detect-bun.outputs.prebaked }}
 
 runs:
   using: "composite"
@@ -59,12 +100,24 @@ runs:
 
     - name: Detect Pre-Installed Bun Runtime
       id: detect-bun
-      if: ${{ inputs.bun == 'true' }}
       shell: bash
       env:
+        INPUT_BUN: ${{ inputs.bun }}
         INPUT_BUN_VERSION: ${{ inputs.bun-version }}
       run: |
         set -euo pipefail
+        PREBAKED="false"
+        if [ "${GT_PREBAKED_CONTAINER:-}" = "1" ] || [ -f "/etc/gt-runner-toolchains" ] || [ -d "/ms-playwright" ]; then
+          PREBAKED="true"
+        fi
+        echo "prebaked=${PREBAKED}" >> "$GITHUB_OUTPUT"
+
+        if [ "${INPUT_BUN}" != "true" ]; then
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "version=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
         BUN_BIN=""
         if command -v bun >/dev/null 2>&1; then
           BUN_BIN="$(command -v bun)"
@@ -108,18 +161,119 @@ runs:
         echo "skip=false" >> "$GITHUB_OUTPUT"
         echo "version=" >> "$GITHUB_OUTPUT"
 
-    - name: Set up Python
+    - name: Detect Pre-Installed Python & Astral uv
+      id: detect-python-uv
       if: ${{ inputs.uv == 'true' }}
+      shell: bash
+      env:
+        INPUT_UV_VERSION: ${{ inputs.uv-version }}
+        INPUT_PYTHON_VERSION: ${{ inputs.python-version }}
+      run: |
+        set -euo pipefail
+        SKIP_UV="false"
+        SKIP_PY="false"
+        FOUND_UV_VER=""
+        FOUND_PY_VER=""
+
+        UV_BIN=""
+        if command -v uv >/dev/null 2>&1; then
+          UV_BIN="$(command -v uv)"
+        else
+          for candidate in /opt/uv/uv /usr/local/bin/uv "${HOME}/.local/bin/uv" "${HOME}/.cargo/bin/uv"; do
+            if [ -x "$candidate" ]; then
+              UV_BIN="$candidate"
+              BIN_DIR="$(dirname "$candidate")"
+              echo "$BIN_DIR" >> "$GITHUB_PATH"
+              export PATH="${BIN_DIR}:${PATH}"
+              break
+            fi
+          done
+        fi
+
+        if [ -n "$UV_BIN" ]; then
+          FOUND_UV_VER="$("$UV_BIN" --version 2>/dev/null | awk '{print $2}' | tr -d ' \r\n' || true)"
+          REQ_UV="${INPUT_UV_VERSION:-latest}"
+          REQ_UV_CLEAN="${REQ_UV#v}"
+          if [ -n "$FOUND_UV_VER" ]; then
+            if [ -z "$REQ_UV_CLEAN" ] || [ "$REQ_UV_CLEAN" = "latest" ] || [ "$FOUND_UV_VER" = "$REQ_UV_CLEAN" ]; then
+              SKIP_UV="true"
+            else
+              case "$FOUND_UV_VER" in
+                "${REQ_UV_CLEAN}".*)
+                  SKIP_UV="true"
+                  ;;
+              esac
+            fi
+          fi
+        fi
+
+        REQ_PY="${INPUT_PYTHON_VERSION:-3.13}"
+        REQ_PY_CLEAN="${REQ_PY#v}"
+        if command -v python3 >/dev/null 2>&1; then
+          RAW_PY="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null | tr -d ' \r\n' || true)"
+          if [ -n "$RAW_PY" ]; then
+            if [ "$RAW_PY" = "$REQ_PY_CLEAN" ]; then
+              SKIP_PY="true"
+              FOUND_PY_VER="$RAW_PY"
+            else
+              case "$RAW_PY" in
+                "${REQ_PY_CLEAN}".*)
+                  SKIP_PY="true"
+                  FOUND_PY_VER="$RAW_PY"
+                  ;;
+              esac
+            fi
+          fi
+        fi
+
+        if [ "$SKIP_PY" != "true" ] && [ -n "$UV_BIN" ]; then
+          UV_PY_BIN="$("$UV_BIN" python find "$REQ_PY_CLEAN" 2>/dev/null | tr -d '\r\n' || true)"
+          if [ -n "$UV_PY_BIN" ] && [ -x "$UV_PY_BIN" ]; then
+            UV_PY_DIR="$(dirname "$UV_PY_BIN")"
+            echo "$UV_PY_DIR" >> "$GITHUB_PATH"
+            export PATH="${UV_PY_DIR}:${PATH}"
+            FOUND_PY_VER="$("$UV_PY_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null | tr -d ' \r\n' || true)"
+            if [ -n "$FOUND_PY_VER" ]; then
+              SKIP_PY="true"
+            fi
+          fi
+        fi
+
+        if [ "$SKIP_UV" = "true" ]; then
+          echo "--> [FAST-PATH] Pre-installed Astral uv ${FOUND_UV_VER} detected at ${UV_BIN}; skipping setup-uv download."
+        fi
+        if [ "$SKIP_PY" = "true" ]; then
+          echo "--> [FAST-PATH] Pre-installed Python ${FOUND_PY_VER} matching '${REQ_PY_CLEAN}' detected; skipping setup-python download."
+        fi
+
+        echo "skip-uv=${SKIP_UV}" >> "$GITHUB_OUTPUT"
+        echo "uv-version=${FOUND_UV_VER}" >> "$GITHUB_OUTPUT"
+        echo "skip-python=${SKIP_PY}" >> "$GITHUB_OUTPUT"
+        echo "python-version=${FOUND_PY_VER}" >> "$GITHUB_OUTPUT"
+
+    - name: Set up Python
+      id: setup-python
+      if: ${{ inputs.uv == 'true' && steps.detect-python-uv.outputs.skip-python != 'true' }}
       uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: ${{ inputs.python-version }}
 
     - name: Set up Astral uv
-      if: ${{ inputs.uv == 'true' }}
+      id: setup-uv
+      if: ${{ inputs.uv == 'true' && steps.detect-python-uv.outputs.skip-uv != 'true' }}
       uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       with:
         version: ${{ inputs.uv-version }}
         enable-cache: ${{ inputs.cache == 'true' }}
+
+    - name: Cache uv Dependencies (Fast-Path Container Mode)
+      if: ${{ inputs.uv == 'true' && steps.detect-python-uv.outputs.skip-uv == 'true' && inputs.cache == 'true' && hashFiles('uv.lock', 'pyproject.toml') != '' }}
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ~/.cache/uv
+        key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock', 'pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-uv-
 
     - name: Set up Bun
       id: setup-bun
@@ -136,6 +290,132 @@ runs:
         key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', 'bun.lockb', 'package.json') }}
         restore-keys: |
           ${{ runner.os }}-bun-
+
+    - name: Detect Pre-Installed Rust Toolchain
+      id: detect-rust
+      if: ${{ inputs.rust == 'true' }}
+      shell: bash
+      env:
+        INPUT_RUST_TOOLCHAIN: ${{ inputs.rust-toolchain }}
+        INPUT_RUST_COMPONENTS: ${{ inputs.rust-components }}
+        INPUT_RUST_TARGETS: ${{ inputs.rust-targets }}
+      run: |
+        set -euo pipefail
+        for candidate_dir in /opt/rust/cargo/bin "${HOME}/.cargo/bin"; do
+          if [ -d "$candidate_dir" ] && [ -x "${candidate_dir}/cargo" ]; then
+            case ":${PATH}:" in
+              *":${candidate_dir}:"*) ;;
+              *)
+                echo "$candidate_dir" >> "$GITHUB_PATH"
+                export PATH="${candidate_dir}:${PATH}"
+                ;;
+            esac
+          fi
+        done
+
+        if [ -d "/opt/rust/rustup" ] && [ -z "${RUSTUP_HOME:-}" ]; then
+          export RUSTUP_HOME="/opt/rust/rustup"
+          echo "RUSTUP_HOME=/opt/rust/rustup" >> "$GITHUB_ENV"
+        fi
+        if [ -d "/opt/rust/cargo" ] && [ -z "${CARGO_HOME:-}" ]; then
+          export CARGO_HOME="/opt/rust/cargo"
+          echo "CARGO_HOME=/opt/rust/cargo" >> "$GITHUB_ENV"
+        fi
+
+        REQ_TC="${INPUT_RUST_TOOLCHAIN:-stable}"
+        if command -v rustup >/dev/null 2>&1 && command -v cargo >/dev/null 2>&1 && command -v rustc >/dev/null 2>&1; then
+          if rustup toolchain list 2>/dev/null | grep -qE "^${REQ_TC}(-|[[:space:]]|$)"; then
+            echo "RUSTUP_TOOLCHAIN=${REQ_TC}" >> "$GITHUB_ENV"
+            export RUSTUP_TOOLCHAIN="${REQ_TC}"
+
+            if [ -n "${INPUT_RUST_TARGETS:-}" ]; then
+              IFS=',' read -ra TARGETS <<< "${INPUT_RUST_TARGETS}"
+              for tgt in "${TARGETS[@]}"; do
+                tgt_clean="$(printf '%s' "$tgt" | tr -d ' ')"
+                if [ -n "$tgt_clean" ] && ! rustup target list --installed --toolchain "$REQ_TC" 2>/dev/null | grep -qx "$tgt_clean"; then
+                  rustup target add "$tgt_clean" --toolchain "$REQ_TC"
+                fi
+              done
+            fi
+
+            RUST_VER="$(rustc +"${REQ_TC}" --version 2>/dev/null | awk '{print $2}' | tr -d ' \r\n' || rustc --version | awk '{print $2}' | tr -d ' \r\n')"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "version=${RUST_VER}" >> "$GITHUB_OUTPUT"
+            echo "--> [FAST-PATH] Pre-installed Rust toolchain (${REQ_TC}: ${RUST_VER}) detected; skipping rustup installation."
+            exit 0
+          fi
+        fi
+
+        echo "skip=false" >> "$GITHUB_OUTPUT"
+        echo "version=" >> "$GITHUB_OUTPUT"
+
+    - name: Install Rust Toolchain via rustup
+      id: setup-rust
+      if: ${{ inputs.rust == 'true' && steps.detect-rust.outputs.skip != 'true' }}
+      shell: bash
+      env:
+        INPUT_RUST_TOOLCHAIN: ${{ inputs.rust-toolchain }}
+        INPUT_RUST_COMPONENTS: ${{ inputs.rust-components }}
+        INPUT_RUST_TARGETS: ${{ inputs.rust-targets }}
+      run: |
+        set -euo pipefail
+        REQ_TC="${INPUT_RUST_TOOLCHAIN:-stable}"
+        COMP_ARGS=()
+        if [ -n "${INPUT_RUST_COMPONENTS:-}" ]; then
+          IFS=',' read -ra COMPS <<< "${INPUT_RUST_COMPONENTS}"
+          for c in "${COMPS[@]}"; do
+            c_clean="$(printf '%s' "$c" | tr -d ' ')"
+            if [ -n "$c_clean" ]; then
+              COMP_ARGS+=("--component" "$c_clean")
+            fi
+          done
+        fi
+
+        TARGET_ARGS=()
+        if [ -n "${INPUT_RUST_TARGETS:-}" ]; then
+          IFS=',' read -ra TARGETS <<< "${INPUT_RUST_TARGETS}"
+          for t in "${TARGETS[@]}"; do
+            t_clean="$(printf '%s' "$t" | tr -d ' ')"
+            if [ -n "$t_clean" ]; then
+              TARGET_ARGS+=("--target" "$t_clean")
+            fi
+          done
+        fi
+
+        if ! command -v rustup >/dev/null 2>&1; then
+          echo "--> Installing rustup and Rust toolchain '${REQ_TC}'..."
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+            --no-modify-path \
+            --profile minimal \
+            --default-toolchain "$REQ_TC" \
+            "${COMP_ARGS[@]}" \
+            "${TARGET_ARGS[@]}"
+          CARGO_BIN="${CARGO_HOME:-${HOME}/.cargo}/bin"
+          echo "$CARGO_BIN" >> "$GITHUB_PATH"
+          export PATH="${CARGO_BIN}:${PATH}"
+        else
+          echo "--> Installing Rust toolchain '${REQ_TC}' via existing rustup..."
+          rustup toolchain install "$REQ_TC" --profile minimal "${COMP_ARGS[@]}" "${TARGET_ARGS[@]}"
+        fi
+
+        echo "RUSTUP_TOOLCHAIN=${REQ_TC}" >> "$GITHUB_ENV"
+        export RUSTUP_TOOLCHAIN="${REQ_TC}"
+        RUST_VER="$(rustc --version | awk '{print $2}' | tr -d ' \r\n')"
+        echo "version=${RUST_VER}" >> "$GITHUB_OUTPUT"
+        echo "--> [RUST] Configured Rust ${RUST_VER} (${REQ_TC})."
+
+    - name: Cache Cargo Registry & Git Dependencies
+      if: ${{ inputs.rust == 'true' && inputs.cache == 'true' && inputs.cargo-cache == 'true' && hashFiles('**/Cargo.lock') != '' }}
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-${{ inputs.rust-toolchain }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-${{ inputs.rust-toolchain }}-
+          ${{ runner.os }}-cargo-
 
     - name: Cache Next.js Build Output
       if: ${{ inputs.nextjs-cache == 'true' }}

@@ -27,7 +27,7 @@ This repository leverages the **Gitea Runner 5.0.0 native `self:` action resolut
 ## Available Actions
 
 ### 1. `setup-toolchains`
-Comprehensive workspace environment setup for Bun (with fast-path detection of pre-baked Bun binaries in container images), Python, `uv` (v10), dynamic internal TLS CA trust (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `CURL_CA_BUNDLE`), dependency caching, and optional `.next/cache` caching for Next.js projects.
+Comprehensive workspace environment setup for Bun, Python, `uv` (v10), and Rust (`rustc`, `cargo`, `rustup` stable/nightly) with automatic fast-path detection of pre-baked toolchains in enterprise container images (`runner-toolchains`, `playwright-runner`, `bun-node-alpine`), dynamic internal TLS CA trust (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `CURL_CA_BUNDLE`), dependency caching (Bun, `uv`, Cargo), and optional `.next/cache` caching for Next.js projects.
 
 ```yaml
 - name: Setup Toolchains
@@ -38,6 +38,9 @@ Comprehensive workspace environment setup for Bun (with fast-path detection of p
     uv: "true"
     uv-version: "latest" # or pin specific uv version, defaults to pyproject.toml / latest
     python-version: "3.13"
+    rust: "true"
+    rust-toolchain: "stable" # or "nightly" / specific semver
+    rust-components: "rustfmt,clippy"
     cache: "true"
     nextjs-cache: "true" # optional: cache .next/cache across Next.js CI/E2E runs
     configure-tls-ca: "true"
@@ -46,6 +49,13 @@ Comprehensive workspace environment setup for Bun (with fast-path detection of p
 **Outputs:**
 - `bun-version`: Resolved Bun version active in `PATH` (from pre-installed binary or `oven-sh/setup-bun`).
 - `bun-skipped`: `"true"` when `oven-sh/setup-bun` was skipped via pre-baked container fast-path.
+- `uv-version`: Resolved Astral `uv` version active in `PATH`.
+- `uv-skipped`: `"true"` when `astral-sh/setup-uv` was skipped via pre-baked container fast-path.
+- `python-version`: Resolved Python version active in `PATH`.
+- `python-skipped`: `"true"` when `actions/setup-python` was skipped via pre-baked container fast-path.
+- `rust-version`: Resolved `rustc` version active in `PATH`.
+- `rust-skipped`: `"true"` when `rustup` installation was skipped via pre-baked container fast-path.
+- `prebaked-container`: `"true"` when running inside a pre-baked enterprise container image.
 
 ### 2. `gitleaks-scan`
 Cryptographically pinned Gitleaks secret scanner.
@@ -174,6 +184,31 @@ Reusable internal loopback TLS trust action that inspects `${GITHUB_SERVER_URL}`
 ---
 
 ## Container Images
+
+### `runner-toolchains` Container Image
+Unified pre-cached enterprise toolchain container image (`git.gt-web-dev.com/gt-dev/runner-toolchains:latest`) built on Ubuntu 24.04 Noble (`@sha256:` pinned) with Bun, Rust (`stable` and `nightly` with `rustfmt` and `clippy`), Astral `uv`, Python 3.13, Node.js LTS, Playwright browsers (`/ms-playwright`), C/C++/OpenSSL build dependencies (`build-essential`, `pkg-config`, `libssl-dev`, `patchelf`), and `/etc/dpkg/dpkg.cfg.d/force-unsafe-io` pre-installed. Paired with `setup-toolchains@v1` fast-path detection, this reduces per-job toolchain setup latency to near-zero.
+
+- **Registry Image Tags**:
+  - `git.gt-web-dev.com/gt-dev/runner-toolchains:latest`
+  - `git.gt-web-dev.com/gt-dev/runner-toolchains:v1.0.0`
+  - `git.gt-web-dev.com/gt-dev/runner-toolchains:1.0.0`
+- **SSoT Versioning**: Version and pinned digests are centrally declared in `containers/runner-toolchains/VERSIONS` and published via `.gitea/workflows/publish-runner-toolchains.yaml`.
+
+```yaml
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    container:
+      image: git.gt-web-dev.com/gt-dev/runner-toolchains:latest
+    steps:
+      - uses: builtin:checkout
+      - uses: self:gt-dev/actions/setup-toolchains@v1
+        with:
+          bun: "true"
+          uv: "true"
+          rust: "true"
+          rust-toolchain: "nightly"
+```
 
 ### `playwright-runner` Container Image
 Dedicated enterprise Single Source of Truth container image built on Ubuntu 24.04 Noble with Playwright browsers, Node.js LTS, Bun, and `/etc/dpkg/dpkg.cfg.d/force-unsafe-io` pre-baked in `/ms-playwright`. Completely eliminates runtime `apt-get` package downloads, browser installs, and disk sync stalls in CI.
