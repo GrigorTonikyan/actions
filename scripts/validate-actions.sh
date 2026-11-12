@@ -241,6 +241,23 @@ for action_file in $ACTION_FILES; do
       echo "::error file=$action_file::docker-build-push must support BUILDKIT_INLINE_CACHE=1"
       FAILED=1
     fi
+  elif [[ "$action_file" == *"publish-release"* ]]; then
+    if ! grep -q "setup-tls-ca" "$action_file"; then
+      echo "::error file=$action_file::publish-release must configure TLS CA trust via setup-tls-ca"
+      FAILED=1
+    fi
+    if ! grep -q "0{64}" "$action_file"; then
+      echo "::error file=$action_file::publish-release must guard against zeroed 0{64} SHA-256 digests"
+      FAILED=1
+    fi
+    if ! grep -q "GIT_TERMINAL_PROMPT=0" "$action_file" || ! grep -q "GCM_INTERACTIVE=never" "$action_file"; then
+      echo "::error file=$action_file::publish-release must enforce headless Git execution flags (GIT_TERMINAL_PROMPT=0, GCM_INTERACTIVE=never)"
+      FAILED=1
+    fi
+    if ! grep -q "dispatch-homebrew" "$action_file" || ! grep -q "dispatch-scoop" "$action_file" || ! grep -q "dispatch-winget" "$action_file"; then
+      echo "::error file=$action_file::publish-release must expose dispatch-homebrew, dispatch-scoop, and dispatch-winget inputs"
+      FAILED=1
+    fi
   fi
 
   check_no_template_injection_in_run "$action_file" "error"

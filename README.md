@@ -183,6 +183,34 @@ Reusable internal loopback TLS trust action that inspects `${GITHUB_SERVER_URL}`
 
 ---
 
+### 10. `publish-release`
+Security-hardened composite action for binary-whitelisted Gitea release publishing, `SHA256SUMS.txt` cryptographic attestation verification (blocking `0{64}` placeholder hashes and non-binary scripts/manifests), HTTP 200 asset reachability checks, and automated multi-app package manager dispatch to `homebrew-tap` (`Formula/<app>.rb` and `Casks/<app>.rb`), `scoop-bucket` (`bucket/<app>.json`), and `winget-pkgs` (WinGet schema `1.9.0` multi-file manifests) using per-repo SSH deploy keys or in-memory HTTP header authentication.
+
+```yaml
+- name: Publish Release & Dispatch Package Manifests
+  uses: self:gt-dev/actions/publish-release@v1
+  with:
+    tag: ${{ github.ref_name }}
+    artifacts-dir: dist-release
+    dispatch-homebrew: "true"
+    dispatch-scoop: "true"
+    dispatch-winget: "true"
+  env:
+    GITEA_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+    HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+    SCOOP_BUCKET_DEPLOY_KEY: ${{ secrets.SCOOP_BUCKET_DEPLOY_KEY }}
+    WINGET_DEPLOY_KEY: ${{ secrets.WINGET_DEPLOY_KEY }}
+```
+
+**Outputs:**
+- `release-id`: Numeric ID of the published Gitea release.
+- `release-url`: HTML URL of the published Gitea release.
+- `checksums-path`: Resolved path to verified `SHA256SUMS.txt`.
+- `uploaded-assets`: Newline-separated list of uploaded binary asset filenames.
+- `dispatched-targets`: Comma-separated list of dispatched package manager targets (`homebrew`, `scoop`, `winget`).
+
+---
+
 ## Container Images
 
 ### `runner-toolchains` Container Image
