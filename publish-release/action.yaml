@@ -1,0 +1,899 @@
+name: "Publish Release & Package Manager Distribution (SSoT)"
+description: "Security-hardened composite action for binary-whitelisted Gitea release publishing, SHA-256 attestation verification, and multi-app Homebrew, Scoop, and WinGet manifest dispatch"
+inputs:
+  tag:
+    description: "Release Git tag (e.g., v1.2.0)"
+    required: false
+    default: "${{ github.ref_name }}"
+  app:
+    description: "Application binary/package name (defaults to repository name)"
+    required: false
+    default: ""
+  version:
+    description: "Release SemVer version string (defaults to tag without leading 'v')"
+    required: false
+    default: ""
+  artifacts-dir:
+    description: "Directory containing compiled release binaries and checksums"
+    required: false
+    default: "dist-release"
+  checksums-file:
+    description: "Optional explicit path to SHA256SUMS.txt (defaults to <artifacts-dir>/SHA256SUMS.txt; generated if absent)"
+    required: false
+    default: ""
+  title:
+    description: "Release title (defaults to '<app> <tag>')"
+    required: false
+    default: ""
+  body:
+    description: "Release notes Markdown text"
+    required: false
+    default: ""
+  body-file:
+    description: "Path to a Markdown file containing release notes"
+    required: false
+    default: ""
+  generate-notes:
+    description: "Automatically generate release notes from Git history when body/body-file are omitted"
+    required: false
+    default: "true"
+  draft:
+    description: "Create the release as a draft"
+    required: false
+    default: "false"
+  prerelease:
+    description: "Mark the release as a pre-release"
+    required: false
+    default: "false"
+  target-commitish:
+    description: "Target branch or commit SHA for the release"
+    required: false
+    default: "${{ github.sha }}"
+  strict-whitelist:
+    description: "Fail immediately if non-whitelisted files (.rb, .json, .yaml, .sh, .ps1) are present in artifacts-dir"
+    required: false
+    default: "false"
+  verify-urls:
+    description: "Verify HTTP 200 reachability of every binary asset URL before dispatching package manifests"
+    required: false
+    default: "true"
+  dispatch-homebrew:
+    description: "Generate and dispatch Homebrew Formula/Cask to the organization homebrew-tap repository"
+    required: false
+    default: "false"
+  homebrew-mode:
+    description: "Homebrew manifest type: formula, cask, or both"
+    required: false
+    default: "formula"
+  homebrew-completions:
+    description: "Include generate_completions_from_executable in generated Homebrew formula"
+    required: false
+    default: "false"
+  dispatch-scoop:
+    description: "Generate and dispatch Scoop JSON manifest to the organization scoop-bucket repository"
+    required: false
+    default: "false"
+  dispatch-winget:
+    description: "Generate and dispatch WinGet 1.9.0 multi-file manifests to the organization winget-pkgs repository"
+    required: false
+    default: "false"
+  publisher:
+    description: "Publisher identifier (falls back to PUBLISHER env/var or github.repository_owner)"
+    required: false
+    default: ""
+  publisher-name:
+    description: "Publisher display name for WinGet manifests (falls back to PUBLISHER_NAME env/var or publisher)"
+    required: false
+    default: ""
+  description:
+    description: "Application short description for package manifests"
+    required: false
+    default: ""
+  homepage:
+    description: "Application homepage URL (defaults to <server-url>/<repository>)"
+    required: false
+    default: ""
+  license:
+    description: "SPDX license identifier"
+    required: false
+    default: "MIT"
+  binary-name:
+    description: "Executable name inside archives (defaults to app name)"
+    required: false
+    default: ""
+  homebrew-tap-repo:
+    description: "Target Homebrew tap repository slug (owner/repo)"
+    required: false
+    default: ""
+  scoop-bucket-repo:
+    description: "Target Scoop bucket repository slug (owner/repo)"
+    required: false
+    default: ""
+  winget-repo:
+    description: "Target WinGet package repository slug (owner/repo)"
+    required: false
+    default: ""
+  distribution-branch:
+    description: "Target branch on package distribution repositories"
+    required: false
+    default: "main"
+  ssh-port:
+    description: "SSH port used when pushing via deploy keys (defaults to GITEA_SSH_PORT or 30009)"
+    required: false
+    default: ""
+  server-url:
+    description: "Gitea server base URL (defaults to github.server_url)"
+    required: false
+    default: "${{ github.server_url }}"
+  repository:
+    description: "Source owner/repository slug (defaults to github.repository)"
+    required: false
+    default: "${{ github.repository }}"
+  dry-run:
+    description: "Validate artifacts and generate package manifests locally without publishing or pushing"
+    required: false
+    default: "false"
+
+outputs:
+  release-id:
+    description: "Numeric ID of the published Gitea release"
+    value: ${{ steps.publish.outputs.release-id }}
+  release-url:
+    description: "HTML URL of the published Gitea release"
+    value: ${{ steps.publish.outputs.release-url }}
+  checksums-path:
+    description: "Resolved path to verified SHA256SUMS.txt"
+    value: ${{ steps.publish.outputs.checksums-path }}
+  uploaded-assets:
+    description: "Newline-separated list of uploaded binary asset filenames"
+    value: ${{ steps.publish.outputs.uploaded-assets }}
+  dispatched-targets:
+    description: "Comma-separated list of dispatched package manager targets"
+    value: ${{ steps.dispatch.outputs.dispatched-targets }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Configure Internal Loopback TLS CA Trust
+      uses: self:gt-dev/actions/setup-tls-ca@v1
+      with:
+        server-url: ${{ inputs.server-url }}
+
+    - name: Validate Artifacts, Verify SHA-256 Attestations & Publish Gitea Release
+      id: publish
+      shell: bash
+      env:
+        INPUT_TAG: ${{ inputs.tag }}
+        INPUT_APP: ${{ inputs.app }}
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_ARTIFACTS_DIR: ${{ inputs.artifacts-dir }}
+        INPUT_CHECKSUMS_FILE: ${{ inputs.checksums-file }}
+        INPUT_TITLE: ${{ inputs.title }}
+        INPUT_BODY: ${{ inputs.body }}
+        INPUT_BODY_FILE: ${{ inputs.body-file }}
+        INPUT_GENERATE_NOTES: ${{ inputs.generate-notes }}
+        INPUT_DRAFT: ${{ inputs.draft }}
+        INPUT_PRERELEASE: ${{ inputs.prerelease }}
+        INPUT_TARGET_COMMITISH: ${{ inputs.target-commitish }}
+        INPUT_STRICT_WHITELIST: ${{ inputs.strict-whitelist }}
+        INPUT_SERVER_URL: ${{ inputs.server-url }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_DRY_RUN: ${{ inputs.dry-run }}
+      run: |
+        set -euo pipefail
+
+        is_whitelisted_asset() {
+          local fname="$1"
+          case "$fname" in
+            SHA256SUMS.txt|SHA256SUMS|*.sbom.json|*.spdx.json|*.cdx.json|*.minisig|*.sig|*.asc)
+              return 0
+              ;;
+            *.rb|*.json|*.yaml|*.yml|*.sh|*.ps1|*.py|*.ts|*.js|*.md|*.txt)
+              return 1
+              ;;
+            *.tar.gz|*.tgz|*.tar.xz|*.txz|*.tar.zst|*.zip|*.vsix|*.deb|*.rpm|*.AppImage|*.appimage|*.dmg|*.msi|*.exe|*.pkg)
+              return 0
+              ;;
+            *)
+              return 1
+              ;;
+          esac
+        }
+
+        is_binary_archive() {
+          local fname="$1"
+          case "$fname" in
+            *.tar.gz|*.tgz|*.tar.xz|*.txz|*.tar.zst|*.zip|*.vsix|*.deb|*.rpm|*.AppImage|*.appimage|*.dmg|*.msi|*.exe|*.pkg)
+              return 0
+              ;;
+            *)
+              return 1
+              ;;
+          esac
+        }
+
+        SERVER_URL="${INPUT_SERVER_URL:-${GITHUB_SERVER_URL:-}}"
+        SERVER_URL="${SERVER_URL%/}"
+        if [ -z "$SERVER_URL" ]; then
+          echo "::error::Unable to resolve Gitea server URL from inputs.server-url or GITHUB_SERVER_URL."
+          exit 1
+        fi
+
+        REPO_SLUG="${INPUT_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
+        if [ -z "$REPO_SLUG" ] || [[ "$REPO_SLUG" != */* ]]; then
+          echo "::error::Invalid or missing repository slug '${REPO_SLUG}'."
+          exit 1
+        fi
+        REPO_OWNER="${REPO_SLUG%%/*}"
+        REPO_NAME="${REPO_SLUG##*/}"
+
+        RAW_TAG="${INPUT_TAG:-${GITHUB_REF_NAME:-}}"
+        if [ -z "$RAW_TAG" ]; then
+          echo "::error::Release tag is required (inputs.tag or GITHUB_REF_NAME)."
+          exit 1
+        fi
+        SEMVER="${INPUT_VERSION:-${RAW_TAG#v}}"
+        TAG_NAME="$RAW_TAG"
+        APP_NAME="${INPUT_APP:-$REPO_NAME}"
+
+        ART_DIR="${INPUT_ARTIFACTS_DIR:-dist-release}"
+        if [ ! -d "$ART_DIR" ]; then
+          echo "::error::Artifacts directory '${ART_DIR}' does not exist."
+          exit 1
+        fi
+
+        # 1. Scan artifacts-dir and enforce binary asset whitelist
+        WHITELISTED_FILES=()
+        BINARY_FILES=()
+        while IFS= read -r -d '' filepath; do
+          base="$(basename "$filepath")"
+          if is_whitelisted_asset "$base"; then
+            WHITELISTED_FILES+=("$filepath")
+            if is_binary_archive "$base"; then
+              BINARY_FILES+=("$filepath")
+            fi
+          else
+            if [ "${INPUT_STRICT_WHITELIST}" = "true" ]; then
+              echo "::error::Forbidden non-binary release asset '${base}' detected in ${ART_DIR} (strict-whitelist=true)."
+              exit 1
+            else
+              echo "--> [WHITELIST] Skipping non-whitelisted file in ${ART_DIR}: ${base}"
+            fi
+          fi
+        done < <(find "$ART_DIR" -maxdepth 1 -type f -print0 | sort -z)
+
+        if [ "${#BINARY_FILES[@]}" -eq 0 ]; then
+          echo "::error::No whitelisted binary archives found in '${ART_DIR}'."
+          exit 1
+        fi
+
+        # 2. Generate or validate SHA256SUMS.txt
+        CHECKSUMS_PATH="${INPUT_CHECKSUMS_FILE:-${ART_DIR}/SHA256SUMS.txt}"
+        if [ ! -f "$CHECKSUMS_PATH" ]; then
+          echo "--> [ATTESTATION] Generating ${CHECKSUMS_PATH} for ${#BINARY_FILES[@]} binary asset(s)..."
+          : > "$CHECKSUMS_PATH"
+          for bfile in "${BINARY_FILES[@]}"; do
+            bname="$(basename "$bfile")"
+            digest="$(sha256sum "$bfile" | awk '{print $1}')"
+            printf '%s  %s\n' "$digest" "$bname" >> "$CHECKSUMS_PATH"
+          done
+          WHITELISTED_FILES+=("$CHECKSUMS_PATH")
+        fi
+
+        # Validate every entry in SHA256SUMS.txt (ban zeroed 0{64} or malformed digests and verify file match)
+        echo "--> [ATTESTATION] Verifying cryptographic digests in ${CHECKSUMS_PATH}..."
+        ENTRY_COUNT=0
+        while IFS= read -r line || [ -n "$line" ]; do
+          clean_line="$(printf '%s' "$line" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          if [ -z "$clean_line" ] || [[ "$clean_line" == \#* ]]; then
+            continue
+          fi
+          digest="$(printf '%s' "$clean_line" | awk '{print $1}')"
+          fname="$(printf '%s' "$clean_line" | awk '{print $2}')"
+          fname="${fname#\*}"
+          fname="${fname#./}"
+
+          if ! printf '%s\n' "$digest" | grep -qE '^[0-9a-fA-F]{64}$'; then
+            echo "::error::Malformed SHA-256 digest '${digest}' for '${fname}' in ${CHECKSUMS_PATH}."
+            exit 1
+          fi
+          if printf '%s\n' "$digest" | grep -qE '^0{64}$'; then
+            echo "::error::Zeroed placeholder SHA-256 digest (0{64}) detected for '${fname}' in ${CHECKSUMS_PATH}."
+            exit 1
+          fi
+          if [ -f "${ART_DIR}/${fname}" ]; then
+            actual="$(sha256sum "${ART_DIR}/${fname}" | awk '{print $1}')"
+            if [ "${actual,,}" != "${digest,,}" ]; then
+              echo "::error::SHA-256 mismatch for ${fname}: expected ${digest}, got ${actual}."
+              exit 1
+            fi
+          fi
+          ENTRY_COUNT=$((ENTRY_COUNT + 1))
+        done < "$CHECKSUMS_PATH"
+
+        if [ "$ENTRY_COUNT" -eq 0 ]; then
+          echo "::error::${CHECKSUMS_PATH} contains zero valid checksum entries."
+          exit 1
+        fi
+        echo "--> [PASS] Verified ${ENTRY_COUNT} SHA-256 checksum attestation(s)."
+
+        if command -v forge >/dev/null 2>&1; then
+          forge release verify-integrity "$CHECKSUMS_PATH" --dir "$ART_DIR" >/dev/null 2>&1 || true
+        fi
+
+        echo "checksums-path=${CHECKSUMS_PATH}" >> "$GITHUB_OUTPUT"
+        echo "app-name=${APP_NAME}" >> "$GITHUB_OUTPUT"
+        echo "semver=${SEMVER}" >> "$GITHUB_OUTPUT"
+        echo "tag-name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+        echo "server-url=${SERVER_URL}" >> "$GITHUB_OUTPUT"
+        echo "repo-owner=${REPO_OWNER}" >> "$GITHUB_OUTPUT"
+        echo "repo-name=${REPO_NAME}" >> "$GITHUB_OUTPUT"
+
+        # Deduplicate whitelisted files list
+        UNIQUE_ASSETS=()
+        SEEN_NAMES=" "
+        for fpath in "${WHITELISTED_FILES[@]}"; do
+          bname="$(basename "$fpath")"
+          if [[ "$SEEN_NAMES" != *" ${bname} "* ]]; then
+            SEEN_NAMES="${SEEN_NAMES}${bname} "
+            UNIQUE_ASSETS+=("$fpath")
+          fi
+        done
+
+        {
+          echo "uploaded-assets<<EOF_ASSETS"
+          for fpath in "${UNIQUE_ASSETS[@]}"; do
+            basename "$fpath"
+          done
+          echo "EOF_ASSETS"
+        } >> "$GITHUB_OUTPUT"
+
+        if [ "${INPUT_DRY_RUN}" = "true" ]; then
+          echo "--> [DRY-RUN] Skipping Gitea release creation and asset upload."
+          echo "release-id=dry-run" >> "$GITHUB_OUTPUT"
+          echo "release-url=${SERVER_URL}/${REPO_SLUG}/releases/tag/${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        AUTH_TOKEN="${GITEA_TOKEN:-${RELEASE_BOT_TOKEN:-${GITHUB_TOKEN:-}}}"
+        if [ -z "$AUTH_TOKEN" ]; then
+          echo "::error::Missing authentication token. Provide GITEA_TOKEN, RELEASE_BOT_TOKEN, or GITHUB_TOKEN in env."
+          exit 1
+        fi
+
+        # Resolve release title and notes body
+        REL_TITLE="${INPUT_TITLE:-${APP_NAME} ${TAG_NAME}}"
+        REL_BODY="${INPUT_BODY:-}"
+        if [ -z "$REL_BODY" ] && [ -n "${INPUT_BODY_FILE:-}" ] && [ -f "${INPUT_BODY_FILE}" ]; then
+          REL_BODY="$(cat "${INPUT_BODY_FILE}")"
+        fi
+        if [ -z "$REL_BODY" ] && [ "${INPUT_GENERATE_NOTES}" = "true" ]; then
+          PREV_TAG="$(git describe --tags --abbrev=0 "${TAG_NAME}^" 2>/dev/null || true)"
+          if [ -n "$PREV_TAG" ]; then
+            COMMIT_LOG="$(git log --pretty=format:'- %s (%h)' "${PREV_TAG}..HEAD" 2>/dev/null || true)"
+          else
+            COMMIT_LOG="$(git log -n 20 --pretty=format:'- %s (%h)' 2>/dev/null || true)"
+          fi
+          REL_BODY="## Release ${TAG_NAME}"$'\n\n'"${COMMIT_LOG:-Automated release ${TAG_NAME}}"
+        fi
+
+        IS_DRAFT="false"
+        if [ "${INPUT_DRAFT}" = "true" ]; then
+          IS_DRAFT="true"
+        fi
+        IS_PRERELEASE="false"
+        if [ "${INPUT_PRERELEASE}" = "true" ] || [[ "$SEMVER" == *-* ]]; then
+          IS_PRERELEASE="true"
+        fi
+
+        API_BASE="${SERVER_URL}/api/v1/repos/${REPO_SLUG}"
+        AUTH_CFG="$(mktemp "${RUNNER_TEMP:-/tmp}/gitea-auth.XXXXXX")"
+        trap 'rm -f "$AUTH_CFG"' EXIT
+        chmod 0600 "$AUTH_CFG"
+        printf 'header = "Authorization: token %s"\n' "$AUTH_TOKEN" > "$AUTH_CFG"
+
+        # Check if release for tag already exists
+        EXISTING_JSON="$(curl -fsSL -K "$AUTH_CFG" "${API_BASE}/releases/tags/${TAG_NAME}" 2>/dev/null || true)"
+        REL_ID=""
+        if [ -n "$EXISTING_JSON" ]; then
+          REL_ID="$(printf '%s' "$EXISTING_JSON" | jq -r '.id // empty' 2>/dev/null || true)"
+        fi
+
+        PAYLOAD_FILE="$(mktemp "${RUNNER_TEMP:-/tmp}/release-payload.XXXXXX.json")"
+        jq -n \
+          --arg tag "$TAG_NAME" \
+          --arg target "${INPUT_TARGET_COMMITISH:-main}" \
+          --arg name "$REL_TITLE" \
+          --arg body "$REL_BODY" \
+          --argjson draft "$IS_DRAFT" \
+          --argjson prerelease "$IS_PRERELEASE" \
+          '{tag_name: $tag, target_commitish: $target, name: $name, body: $body, draft: $draft, prerelease: $prerelease}' > "$PAYLOAD_FILE"
+
+        if [ -n "$REL_ID" ]; then
+          echo "--> [RELEASE] Updating existing Gitea release ID ${REL_ID} for tag ${TAG_NAME}..."
+          REL_RESP="$(curl -fsSL -X PATCH -K "$AUTH_CFG" -H "Content-Type: application/json" --data-binary @"$PAYLOAD_FILE" "${API_BASE}/releases/${REL_ID}")"
+        else
+          echo "--> [RELEASE] Creating Gitea release for tag ${TAG_NAME}..."
+          REL_RESP="$(curl -fsSL -X POST -K "$AUTH_CFG" -H "Content-Type: application/json" --data-binary @"$PAYLOAD_FILE" "${API_BASE}/releases")"
+          REL_ID="$(printf '%s' "$REL_RESP" | jq -r '.id // empty')"
+        fi
+        rm -f "$PAYLOAD_FILE"
+
+        if [ -z "$REL_ID" ]; then
+          echo "::error::Failed to resolve release ID from Gitea API response."
+          exit 1
+        fi
+
+        REL_HTML_URL="$(printf '%s' "$REL_RESP" | jq -r '.html_url // empty')"
+        if [ -z "$REL_HTML_URL" ]; then
+          REL_HTML_URL="${SERVER_URL}/${REPO_SLUG}/releases/tag/${TAG_NAME}"
+        fi
+
+        # Delete any existing conflicting asset with the same filename before uploading fresh binary
+        EXISTING_ASSETS_JSON="$(curl -fsSL -K "$AUTH_CFG" "${API_BASE}/releases/${REL_ID}/assets" 2>/dev/null || printf '[]')"
+        for fpath in "${UNIQUE_ASSETS[@]}"; do
+          bname="$(basename "$fpath")"
+          old_asset_id="$(printf '%s' "$EXISTING_ASSETS_JSON" | jq -r --arg name "$bname" '.[] | select(.name == $name) | .id // empty' | head -n1 || true)"
+          if [ -n "$old_asset_id" ]; then
+            curl -fsSL -X DELETE -K "$AUTH_CFG" "${API_BASE}/releases/${REL_ID}/assets/${old_asset_id}" >/dev/null 2>&1 || true
+          fi
+          echo "--> [UPLOAD] Uploading whitelisted asset: ${bname}"
+          curl -fsSL -X POST -K "$AUTH_CFG" \
+            -F "attachment=@${fpath}" \
+            "${API_BASE}/releases/${REL_ID}/assets?name=${bname}" >/dev/null
+        done
+
+        echo "release-id=${REL_ID}" >> "$GITHUB_OUTPUT"
+        echo "release-url=${REL_HTML_URL}" >> "$GITHUB_OUTPUT"
+        echo "--> [PASS] Published release ${TAG_NAME} (ID: ${REL_ID}) with ${#UNIQUE_ASSETS[@]} verified asset(s)."
+
+    - name: Verify Binary Asset URLs & Dispatch Package Manager Manifests
+      id: dispatch
+      shell: bash
+      env:
+        INPUT_DISPATCH_HOMEBREW: ${{ inputs.dispatch-homebrew }}
+        INPUT_HOMEBREW_MODE: ${{ inputs.homebrew-mode }}
+        INPUT_HOMEBREW_COMPLETIONS: ${{ inputs.homebrew-completions }}
+        INPUT_DISPATCH_SCOOP: ${{ inputs.dispatch-scoop }}
+        INPUT_DISPATCH_WINGET: ${{ inputs.dispatch-winget }}
+        INPUT_VERIFY_URLS: ${{ inputs.verify-urls }}
+        INPUT_PUBLISHER: ${{ inputs.publisher }}
+        INPUT_PUBLISHER_NAME: ${{ inputs.publisher-name }}
+        INPUT_DESCRIPTION: ${{ inputs.description }}
+        INPUT_HOMEPAGE: ${{ inputs.homepage }}
+        INPUT_LICENSE: ${{ inputs.license }}
+        INPUT_BINARY_NAME: ${{ inputs.binary-name }}
+        INPUT_HOMEBREW_TAP_REPO: ${{ inputs.homebrew-tap-repo }}
+        INPUT_SCOOP_BUCKET_REPO: ${{ inputs.scoop-bucket-repo }}
+        INPUT_WINGET_REPO: ${{ inputs.winget-repo }}
+        INPUT_DISTRIBUTION_BRANCH: ${{ inputs.distribution-branch }}
+        INPUT_SSH_PORT: ${{ inputs.ssh-port }}
+        INPUT_DRY_RUN: ${{ inputs.dry-run }}
+        CHECKSUMS_PATH: ${{ steps.publish.outputs.checksums-path }}
+        APP_NAME: ${{ steps.publish.outputs.app-name }}
+        SEMVER: ${{ steps.publish.outputs.semver }}
+        TAG_NAME: ${{ steps.publish.outputs.tag-name }}
+        SERVER_URL: ${{ steps.publish.outputs.server-url }}
+        REPO_OWNER: ${{ steps.publish.outputs.repo-owner }}
+        REPO_NAME: ${{ steps.publish.outputs.repo-name }}
+      run: |
+        set -euo pipefail
+
+        if [ "${INPUT_DISPATCH_HOMEBREW}" != "true" ] && [ "${INPUT_DISPATCH_SCOOP}" != "true" ] && [ "${INPUT_DISPATCH_WINGET}" != "true" ]; then
+          echo "--> [DISPATCH] Package manager dispatch disabled; skipping."
+          echo "dispatched-targets=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        PUBLISHER_ID="${INPUT_PUBLISHER:-${PUBLISHER:-$REPO_OWNER}}"
+        PUBLISHER_DISPLAY="${INPUT_PUBLISHER_NAME:-${PUBLISHER_NAME:-$PUBLISHER_ID}}"
+        BIN_NAME="${INPUT_BINARY_NAME:-$APP_NAME}"
+        HOMEPAGE_URL="${INPUT_HOMEPAGE:-${SERVER_URL}/${REPO_OWNER}/${REPO_NAME}}"
+        PKG_DESC="${INPUT_DESCRIPTION:-Enterprise ${APP_NAME} CLI and runtime}"
+        PKG_LICENSE="${INPUT_LICENSE:-MIT}"
+        DIST_BRANCH="${INPUT_DISTRIBUTION_BRANCH:-main}"
+
+        HOMEBREW_REPO="${INPUT_HOMEBREW_TAP_REPO:-${HOMEBREW_TAP_REPO:-${REPO_OWNER}/homebrew-tap}}"
+        SCOOP_REPO="${INPUT_SCOOP_BUCKET_REPO:-${SCOOP_BUCKET_REPO:-${REPO_OWNER}/scoop-bucket}}"
+        WINGET_TARGET_REPO="${INPUT_WINGET_REPO:-${WINGET_REPO:-${REPO_OWNER}/winget-pkgs}}"
+
+        SERVER_HOST="${SERVER_URL#https://}"
+        SERVER_HOST="${SERVER_HOST#http://}"
+        SERVER_HOST="${SERVER_HOST%%/*}"
+        SERVER_HOST="${SERVER_HOST%%:*}"
+        SSH_PORT_VAL="${INPUT_SSH_PORT:-${GITEA_SSH_PORT:-30009}}"
+
+        DOWNLOAD_BASE="${SERVER_URL}/${REPO_OWNER}/${REPO_NAME}/releases/download/${TAG_NAME}"
+
+        # Parse SHA256SUMS.txt and classify available architecture assets
+        MACOS_ARM64_FILE=""
+        MACOS_ARM64_SHA=""
+        MACOS_X64_FILE=""
+        MACOS_X64_SHA=""
+        LINUX_ARM64_FILE=""
+        LINUX_ARM64_SHA=""
+        LINUX_X64_FILE=""
+        LINUX_X64_SHA=""
+        WIN_X64_FILE=""
+        WIN_X64_SHA=""
+        WIN_ARM64_FILE=""
+        WIN_ARM64_SHA=""
+
+        AUTH_TOKEN="${GITEA_TOKEN:-${RELEASE_BOT_TOKEN:-${GITHUB_TOKEN:-}}}"
+        AUTH_CFG=""
+        if [ -n "$AUTH_TOKEN" ]; then
+          AUTH_CFG="$(mktemp "${RUNNER_TEMP:-/tmp}/gitea-verify-auth.XXXXXX")"
+          chmod 0600 "$AUTH_CFG"
+          printf 'header = "Authorization: token %s"\n' "$AUTH_TOKEN" > "$AUTH_CFG"
+        fi
+        cleanup_tmp() {
+          if [ -n "$AUTH_CFG" ] && [ -f "$AUTH_CFG" ]; then
+            rm -f "$AUTH_CFG"
+          fi
+        }
+        trap cleanup_tmp EXIT
+
+        while IFS= read -r line || [ -n "$line" ]; do
+          clean_line="$(printf '%s' "$line" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          if [ -z "$clean_line" ] || [[ "$clean_line" == \#* ]]; then
+            continue
+          fi
+          digest="$(printf '%s' "$clean_line" | awk '{print $1}')"
+          fname="$(printf '%s' "$clean_line" | awk '{print $2}')"
+          fname="${fname#\*}"
+          fname="${fname#./}"
+
+          if [ "${INPUT_VERIFY_URLS}" = "true" ] && [ "${INPUT_DRY_RUN}" != "true" ]; then
+            asset_url="${DOWNLOAD_BASE}/${fname}"
+            echo "--> [VERIFY-URL] Checking HTTP 200 reachability: ${asset_url}"
+            if [ -n "$AUTH_CFG" ]; then
+              curl -fsSLI -K "$AUTH_CFG" "$asset_url" >/dev/null
+            else
+              curl -fsSLI "$asset_url" >/dev/null
+            fi
+          fi
+
+          lower_name="${fname,,}"
+          if [[ "$lower_name" == *darwin* || "$lower_name" == *macos* || "$lower_name" == *apple* ]]; then
+            if [[ "$lower_name" == *aarch64* || "$lower_name" == *arm64* ]]; then
+              MACOS_ARM64_FILE="$fname"
+              MACOS_ARM64_SHA="$digest"
+            elif [[ "$lower_name" == *x86_64* || "$lower_name" == *amd64* || "$lower_name" == *x64* ]]; then
+              MACOS_X64_FILE="$fname"
+              MACOS_X64_SHA="$digest"
+            fi
+          elif [[ "$lower_name" == *linux* ]]; then
+            if [[ "$lower_name" == *aarch64* || "$lower_name" == *arm64* ]]; then
+              LINUX_ARM64_FILE="$fname"
+              LINUX_ARM64_SHA="$digest"
+            elif [[ "$lower_name" == *x86_64* || "$lower_name" == *amd64* || "$lower_name" == *x64* ]]; then
+              LINUX_X64_FILE="$fname"
+              LINUX_X64_SHA="$digest"
+            fi
+          elif [[ "$lower_name" == *windows* || "$lower_name" == *pc-windows* || "$lower_name" == *win64* || "$lower_name" == *win-x64* || "$lower_name" == *.msi || "$lower_name" == *.exe ]]; then
+            if [[ "$lower_name" == *aarch64* || "$lower_name" == *arm64* ]]; then
+              WIN_ARM64_FILE="$fname"
+              WIN_ARM64_SHA="$digest"
+            else
+              WIN_X64_FILE="$fname"
+              WIN_X64_SHA="$digest"
+            fi
+          fi
+        done < "$CHECKSUMS_PATH"
+
+        push_packaging_repo() {
+          local target_repo="$1"
+          local deploy_key_val="$2"
+          local work_dir="$3"
+          local commit_msg="$4"
+
+          if [ "${INPUT_DRY_RUN}" = "true" ]; then
+            echo "--> [DRY-RUN] Prepared manifest commit '${commit_msg}' for ${target_repo}."
+            return 0
+          fi
+
+          export GIT_TERMINAL_PROMPT=0
+          export GCM_INTERACTIVE=never
+
+          if [ -n "$deploy_key_val" ]; then
+            local key_file
+            key_file="$(mktemp "${RUNNER_TEMP:-/tmp}/deploy-key.XXXXXX")"
+            chmod 0600 "$key_file"
+            printf '%s\n' "$deploy_key_val" > "$key_file"
+            export GIT_SSH_COMMAND="ssh -i ${key_file} -p ${SSH_PORT_VAL} -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+            local ssh_remote="ssh://git@${SERVER_HOST}:${SSH_PORT_VAL}/${target_repo}.git"
+            git -C "$work_dir" remote set-url origin "$ssh_remote"
+            git -C "$work_dir" push origin "HEAD:${DIST_BRANCH}"
+            rm -f "$key_file"
+            unset GIT_SSH_COMMAND
+          elif [ -n "$AUTH_TOKEN" ]; then
+            GIT_CONFIG_COUNT=1 \
+            GIT_CONFIG_KEY_0="http.${SERVER_URL}/.extraHeader" \
+            GIT_CONFIG_VALUE_0="Authorization: token ${AUTH_TOKEN}" \
+            git -C "$work_dir" push origin "HEAD:${DIST_BRANCH}"
+          else
+            echo "::error::Neither SSH deploy key nor GITEA_TOKEN provided to push to ${target_repo}."
+            exit 1
+          fi
+        }
+
+        clone_packaging_repo() {
+          local target_repo="$1"
+          local deploy_key_val="$2"
+          local dest_dir="$3"
+
+          if [ "${INPUT_DRY_RUN}" = "true" ]; then
+            mkdir -p "$dest_dir"
+            git -C "$dest_dir" init -b "$DIST_BRANCH" >/dev/null 2>&1
+            return 0
+          fi
+
+          export GIT_TERMINAL_PROMPT=0
+          export GCM_INTERACTIVE=never
+
+          if [ -n "$deploy_key_val" ]; then
+            local key_file
+            key_file="$(mktemp "${RUNNER_TEMP:-/tmp}/deploy-key.XXXXXX")"
+            chmod 0600 "$key_file"
+            printf '%s\n' "$deploy_key_val" > "$key_file"
+            GIT_SSH_COMMAND="ssh -i ${key_file} -p ${SSH_PORT_VAL} -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
+              git clone --depth 1 --branch "$DIST_BRANCH" "ssh://git@${SERVER_HOST}:${SSH_PORT_VAL}/${target_repo}.git" "$dest_dir"
+            rm -f "$key_file"
+          elif [ -n "$AUTH_TOKEN" ]; then
+            GIT_CONFIG_COUNT=1 \
+            GIT_CONFIG_KEY_0="http.${SERVER_URL}/.extraHeader" \
+            GIT_CONFIG_VALUE_0="Authorization: token ${AUTH_TOKEN}" \
+            git clone --depth 1 --branch "$DIST_BRANCH" "${SERVER_URL}/${target_repo}.git" "$dest_dir"
+          else
+            echo "::error::Neither SSH deploy key nor GITEA_TOKEN provided to clone ${target_repo}."
+            exit 1
+          fi
+        }
+
+        DISPATCHED_LIST=()
+        WORK_ROOT="$(mktemp -d "${RUNNER_TEMP:-/tmp}/pkg-dispatch.XXXXXX")"
+
+        # 1. Homebrew Tap Dispatch (Formula/<app>.rb and/or Casks/<app>.rb)
+        if [ "${INPUT_DISPATCH_HOMEBREW}" = "true" ]; then
+          if [ -z "$MACOS_ARM64_FILE" ] && [ -z "$MACOS_X64_FILE" ] && [ -z "$LINUX_ARM64_FILE" ] && [ -z "$LINUX_X64_FILE" ]; then
+            echo "::error::dispatch-homebrew=true, but no macOS or Linux binary archives were found in ${CHECKSUMS_PATH}."
+            exit 1
+          fi
+
+          HB_DIR="${WORK_ROOT}/homebrew-tap"
+          HB_KEY="${HOMEBREW_TAP_DEPLOY_KEY:-}"
+          clone_packaging_repo "$HOMEBREW_REPO" "$HB_KEY" "$HB_DIR"
+
+          # Convert app-name to Ruby class name (e.g. tool-meister -> ToolMeister)
+          RUBY_CLASS="$(printf '%s' "$APP_NAME" | awk -F'[-_]' '{for(i=1;i<=NF;i++){printf "%s%s", toupper(substr($i,1,1)), substr($i,2)}}')"
+          HB_MODE="${INPUT_HOMEBREW_MODE:-formula}"
+
+          if [ "$HB_MODE" = "formula" ] || [ "$HB_MODE" = "both" ]; then
+            mkdir -p "${HB_DIR}/Formula"
+            FORMULA_FILE="${HB_DIR}/Formula/${APP_NAME}.rb"
+            {
+              printf 'class %s < Formula\n' "$RUBY_CLASS"
+              printf '  desc "%s"\n' "$PKG_DESC"
+              printf '  homepage "%s"\n' "$HOMEPAGE_URL"
+              printf '  version "%s"\n' "$SEMVER"
+              printf '  license "%s"\n' "$PKG_LICENSE"
+              printf '\n'
+              if [ -n "$MACOS_ARM64_FILE" ] || [ -n "$MACOS_X64_FILE" ]; then
+                printf '  on_macos do\n'
+                if [ -n "$MACOS_ARM64_FILE" ]; then
+                  printf '    on_arm do\n'
+                  printf '      url "%s/%s"\n' "$DOWNLOAD_BASE" "$MACOS_ARM64_FILE"
+                  printf '      sha256 "%s"\n' "$MACOS_ARM64_SHA"
+                  printf '    end\n'
+                fi
+                if [ -n "$MACOS_X64_FILE" ]; then
+                  printf '    on_intel do\n'
+                  printf '      url "%s/%s"\n' "$DOWNLOAD_BASE" "$MACOS_X64_FILE"
+                  printf '      sha256 "%s"\n' "$MACOS_X64_SHA"
+                  printf '    end\n'
+                fi
+                printf '  end\n\n'
+              fi
+              if [ -n "$LINUX_ARM64_FILE" ] || [ -n "$LINUX_X64_FILE" ]; then
+                printf '  on_linux do\n'
+                if [ -n "$LINUX_ARM64_FILE" ]; then
+                  printf '    on_arm do\n'
+                  printf '      url "%s/%s"\n' "$DOWNLOAD_BASE" "$LINUX_ARM64_FILE"
+                  printf '      sha256 "%s"\n' "$LINUX_ARM64_SHA"
+                  printf '    end\n'
+                fi
+                if [ -n "$LINUX_X64_FILE" ]; then
+                  printf '    on_intel do\n'
+                  printf '      url "%s/%s"\n' "$DOWNLOAD_BASE" "$LINUX_X64_FILE"
+                  printf '      sha256 "%s"\n' "$LINUX_X64_SHA"
+                  printf '    end\n'
+                fi
+                printf '  end\n\n'
+              fi
+              printf '  def install\n'
+              printf '    bin.install "%s"\n' "$BIN_NAME"
+              if [ "${INPUT_HOMEBREW_COMPLETIONS}" = "true" ]; then
+                printf '    generate_completions_from_executable(bin/"%s", "completions")\n' "$BIN_NAME"
+              fi
+              printf '  end\n\n'
+              printf '  test do\n'
+              printf '    system "#{bin}/%s", "--version"\n' "$BIN_NAME"
+              printf '  end\n'
+              printf 'end\n'
+            } > "$FORMULA_FILE"
+            echo "--> [HOMEBREW] Generated ${FORMULA_FILE}"
+          fi
+
+          if [ "$HB_MODE" = "cask" ] || [ "$HB_MODE" = "both" ]; then
+            if [ -n "$MACOS_ARM64_FILE" ] || [ -n "$MACOS_X64_FILE" ]; then
+              mkdir -p "${HB_DIR}/Casks"
+              CASK_FILE="${HB_DIR}/Casks/${APP_NAME}.rb"
+              {
+                printf 'cask "%s" do\n' "$APP_NAME"
+                printf '  version "%s"\n' "$SEMVER"
+                printf '\n'
+                if [ -n "$MACOS_ARM64_FILE" ] && [ -n "$MACOS_X64_FILE" ]; then
+                  printf '  on_arm do\n'
+                  printf '    sha256 "%s"\n' "$MACOS_ARM64_SHA"
+                  printf '    url "%s/%s"\n' "$DOWNLOAD_BASE" "$MACOS_ARM64_FILE"
+                  printf '  end\n'
+                  printf '  on_intel do\n'
+                  printf '    sha256 "%s"\n' "$MACOS_X64_SHA"
+                  printf '    url "%s/%s"\n' "$DOWNLOAD_BASE" "$MACOS_X64_FILE"
+                  printf '  end\n'
+                elif [ -n "$MACOS_ARM64_FILE" ]; then
+                  printf '  sha256 "%s"\n' "$MACOS_ARM64_SHA"
+                  printf '  url "%s/%s"\n' "$DOWNLOAD_BASE" "$MACOS_ARM64_FILE"
+                else
+                  printf '  sha256 "%s"\n' "$MACOS_X64_SHA"
+                  printf '  url "%s/%s"\n' "$DOWNLOAD_BASE" "$MACOS_X64_FILE"
+                fi
+                printf '\n'
+                printf '  name "%s"\n' "$APP_NAME"
+                printf '  desc "%s"\n' "$PKG_DESC"
+                printf '  homepage "%s"\n' "$HOMEPAGE_URL"
+                printf '  binary "%s"\n' "$BIN_NAME"
+                printf 'end\n'
+              } > "$CASK_FILE"
+              echo "--> [HOMEBREW] Generated ${CASK_FILE}"
+            fi
+          fi
+
+          git -C "$HB_DIR" config user.name "${GITHUB_ACTOR:-release-bot}"
+          git -C "$HB_DIR" config user.email "${GITHUB_ACTOR:-release-bot}@noreply.${SERVER_HOST}"
+          git -C "$HB_DIR" add -A
+          if ! git -C "$HB_DIR" diff --cached --quiet; then
+            git -C "$HB_DIR" commit -m "chore(${APP_NAME}): release ${TAG_NAME}"
+            push_packaging_repo "$HOMEBREW_REPO" "$HB_KEY" "$HB_DIR" "chore(${APP_NAME}): release ${TAG_NAME}"
+          fi
+          DISPATCHED_LIST+=("homebrew")
+        fi
+
+        # 2. Scoop Bucket Dispatch (bucket/<app>.json)
+        if [ "${INPUT_DISPATCH_SCOOP}" = "true" ]; then
+          if [ -z "$WIN_X64_FILE" ] && [ -z "$WIN_ARM64_FILE" ]; then
+            echo "::error::dispatch-scoop=true, but no Windows binary archives were found in ${CHECKSUMS_PATH}."
+            exit 1
+          fi
+
+          SCOOP_DIR="${WORK_ROOT}/scoop-bucket"
+          SCOOP_KEY="${SCOOP_BUCKET_DEPLOY_KEY:-}"
+          clone_packaging_repo "$SCOOP_REPO" "$SCOOP_KEY" "$SCOOP_DIR"
+          mkdir -p "${SCOOP_DIR}/bucket"
+          SCOOP_FILE="${SCOOP_DIR}/bucket/${APP_NAME}.json"
+
+          jq -n \
+            --arg version "$SEMVER" \
+            --arg desc "$PKG_DESC" \
+            --arg homepage "$HOMEPAGE_URL" \
+            --arg license "$PKG_LICENSE" \
+            --arg bin "${BIN_NAME}.exe" \
+            --arg x64_url "${WIN_X64_FILE:+${DOWNLOAD_BASE}/${WIN_X64_FILE}}" \
+            --arg x64_hash "$WIN_X64_SHA" \
+            --arg arm64_url "${WIN_ARM64_FILE:+${DOWNLOAD_BASE}/${WIN_ARM64_FILE}}" \
+            --arg arm64_hash "$WIN_ARM64_SHA" \
+            '{
+              version: $version,
+              description: $desc,
+              homepage: $homepage,
+              license: $license,
+              bin: $bin,
+              architecture: (
+                ({} | if $x64_url != "" then . + {"64bit": {url: $x64_url, hash: $x64_hash}} else . end)
+                | (if $arm64_url != "" then . + {"arm64": {url: $arm64_url, hash: $arm64_hash}} else . end)
+              )
+            }' > "$SCOOP_FILE"
+
+          echo "--> [SCOOP] Generated ${SCOOP_FILE}"
+          git -C "$SCOOP_DIR" config user.name "${GITHUB_ACTOR:-release-bot}"
+          git -C "$SCOOP_DIR" config user.email "${GITHUB_ACTOR:-release-bot}@noreply.${SERVER_HOST}"
+          git -C "$SCOOP_DIR" add -A
+          if ! git -C "$SCOOP_DIR" diff --cached --quiet; then
+            git -C "$SCOOP_DIR" commit -m "chore(${APP_NAME}): release ${TAG_NAME}"
+            push_packaging_repo "$SCOOP_REPO" "$SCOOP_KEY" "$SCOOP_DIR" "chore(${APP_NAME}): release ${TAG_NAME}"
+          fi
+          DISPATCHED_LIST+=("scoop")
+        fi
+
+        # 3. WinGet 1.9.0 Multi-File Manifest Dispatch
+        if [ "${INPUT_DISPATCH_WINGET}" = "true" ]; then
+          if [ -z "$WIN_X64_FILE" ] && [ -z "$WIN_ARM64_FILE" ]; then
+            echo "::error::dispatch-winget=true, but no Windows binary archives were found in ${CHECKSUMS_PATH}."
+            exit 1
+          fi
+
+          WG_DIR="${WORK_ROOT}/winget-pkgs"
+          WG_KEY="${WINGET_DEPLOY_KEY:-}"
+          clone_packaging_repo "$WINGET_TARGET_REPO" "$WG_KEY" "$WG_DIR"
+
+          FIRST_CHAR="$(printf '%s' "$PUBLISHER_ID" | cut -c1 | tr '[:upper:]' '[:lower:]')"
+          PKG_ID="${PUBLISHER_ID}.${APP_NAME}"
+          MANIFEST_DIR="${WG_DIR}/manifests/${FIRST_CHAR}/${PUBLISHER_ID}/${APP_NAME}/${SEMVER}"
+          mkdir -p "$MANIFEST_DIR"
+
+          # Version manifest
+          cat > "${MANIFEST_DIR}/${PKG_ID}.yaml" <<EOF_WG_VER
+# yaml-language-server: \$schema=https://aka.ms/winget-manifest.version.1.9.0.schema.json
+PackageIdentifier: ${PKG_ID}
+PackageVersion: ${SEMVER}
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.9.0
+EOF_WG_VER
+
+          # DefaultLocale manifest
+          cat > "${MANIFEST_DIR}/${PKG_ID}.locale.en-US.yaml" <<EOF_WG_LOC
+# yaml-language-server: \$schema=https://aka.ms/winget-manifest.defaultLocale.1.9.0.schema.json
+PackageIdentifier: ${PKG_ID}
+PackageVersion: ${SEMVER}
+PackageLocale: en-US
+Publisher: ${PUBLISHER_DISPLAY}
+PackageName: ${APP_NAME}
+PackageUrl: ${HOMEPAGE_URL}
+License: ${PKG_LICENSE}
+ShortDescription: ${PKG_DESC}
+Moniker: ${APP_NAME}
+ManifestType: defaultLocale
+ManifestVersion: 1.9.0
+EOF_WG_LOC
+
+          # Installer manifest (strictly for architectures present in SHA256SUMS.txt)
+          {
+            printf '# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.9.0.schema.json\n'
+            printf 'PackageIdentifier: %s\n' "$PKG_ID"
+            printf 'PackageVersion: %s\n' "$SEMVER"
+            printf 'InstallerType: zip\n'
+            printf 'NestedInstallerType: portable\n'
+            printf 'NestedInstallerFiles:\n'
+            printf '  - RelativeFilePath: %s.exe\n' "$BIN_NAME"
+            printf '    PortableCommandAlias: %s\n' "$BIN_NAME"
+            printf 'Installers:\n'
+            if [ -n "$WIN_X64_FILE" ]; then
+              printf '  - Architecture: x64\n'
+              printf '    InstallerUrl: %s/%s\n' "$DOWNLOAD_BASE" "$WIN_X64_FILE"
+              printf '    InstallerSha256: %s\n' "${WIN_X64_SHA^^}"
+            fi
+            if [ -n "$WIN_ARM64_FILE" ]; then
+              printf '  - Architecture: arm64\n'
+              printf '    InstallerUrl: %s/%s\n' "$DOWNLOAD_BASE" "$WIN_ARM64_FILE"
+              printf '    InstallerSha256: %s\n' "${WIN_ARM64_SHA^^}"
+            fi
+            printf 'ManifestType: installer\n'
+            printf 'ManifestVersion: 1.9.0\n'
+          } > "${MANIFEST_DIR}/${PKG_ID}.installer.yaml"
+
+          echo "--> [WINGET] Generated WinGet 1.9.0 manifests in ${MANIFEST_DIR}"
+          git -C "$WG_DIR" config user.name "${GITHUB_ACTOR:-release-bot}"
+          git -C "$WG_DIR" config user.email "${GITHUB_ACTOR:-release-bot}@noreply.${SERVER_HOST}"
+          git -C "$WG_DIR" add -A
+          if ! git -C "$WG_DIR" diff --cached --quiet; then
+            git -C "$WG_DIR" commit -m "chore(${PKG_ID}): release ${SEMVER}"
+            push_packaging_repo "$WINGET_TARGET_REPO" "$WG_KEY" "$WG_DIR" "chore(${PKG_ID}): release ${SEMVER}"
+          fi
+          DISPATCHED_LIST+=("winget")
+        fi
+
+        rm -rf "$WORK_ROOT"
+        JOINED_TARGETS="$(IFS=','; printf '%s' "${DISPATCHED_LIST[*]}")"
+        echo "dispatched-targets=${JOINED_TARGETS}" >> "$GITHUB_OUTPUT"
+        echo "--> [PASS] Completed package manager dispatch (${JOINED_TARGETS})."
