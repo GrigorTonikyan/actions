@@ -46,7 +46,8 @@ runs:
     - name: Cache Playwright Browsers
       id: playwright-cache
       if: ${{ inputs.cache == 'true' }}
-      uses: actions/cache@v4
+      # Intentionally pinned to v4.x for Gitea Actions Cache v1 API compatibility
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ~/.cache/ms-playwright
         key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-${{ inputs.browser }}-${{ inputs.only-shell }}
@@ -61,8 +62,9 @@ runs:
       env:
         DEBIAN_FRONTEND: "noninteractive"
         NEEDRESTART_MODE: "a"
+        TARGET_OS: ${{ runner.os }}
       run: |
-        if [ "${{ runner.os }}" = "Linux" ]; then
+        if [ "$TARGET_OS" = "Linux" ]; then
           # Determine sudo usage for root vs non-root runner environments
           SUDO=""
           if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
@@ -85,13 +87,16 @@ runs:
           $SUDO apt-get update -qq && $SUDO apt-get install -y --no-install-recommends $REQUIRED_PKGS
           echo "--> [DONE] Targeted runtime libraries installed successfully."
         else
-          echo "--> OS is ${{ runner.os }}. Skipping Linux dependency provisioning."
+          echo "--> OS is ${TARGET_OS}. Skipping Linux dependency provisioning."
         fi
 
     - name: Provision Playwright Browsers
       shell: bash
+      env:
+        TARGET_BROWSER: ${{ inputs.browser }}
+        ONLY_SHELL: ${{ inputs.only-shell }}
+        CACHE_HIT: ${{ steps.playwright-cache.outputs.cache-hit }}
       run: |
-        TARGET_BROWSER="${{ inputs.browser }}"
         PW_RUNNER="bunx playwright"
         if ! command -v bunx >/dev/null 2>&1 && command -v npx >/dev/null 2>&1; then
           PW_RUNNER="npx playwright"
@@ -100,7 +105,7 @@ runs:
         # 1. Check if running in container with /ms-playwright containing required browser revisions
         if [ -d "/ms-playwright" ]; then
           DRY_RUN_ARGS="$TARGET_BROWSER"
-          if [ "$TARGET_BROWSER" = "chromium" ] && [ "${{ inputs.only-shell }}" = "true" ]; then
+          if [ "$TARGET_BROWSER" = "chromium" ] && [ "$ONLY_SHELL" = "true" ]; then
             DRY_RUN_ARGS="--only-shell chromium"
           fi
 
@@ -128,7 +133,7 @@ runs:
         fi
 
         # 2. Check if restored from cache
-        if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ]; then
+        if [ "$CACHE_HIT" = "true" ]; then
           echo "--> [CACHE HIT] Playwright browser binaries restored from cache (~/.cache/ms-playwright)."
           echo "--> [OK] Skipping browser download."
           exit 0
@@ -138,7 +143,7 @@ runs:
         if [ "$TARGET_BROWSER" = "all" ] || [ -z "$TARGET_BROWSER" ]; then
           echo "--> [DOWNLOAD] Installing all Playwright browsers..."
           $PW_RUNNER install
-        elif [ "$TARGET_BROWSER" = "chromium" ] && [ "${{ inputs.only-shell }}" = "true" ]; then
+        elif [ "$TARGET_BROWSER" = "chromium" ] && [ "$ONLY_SHELL" = "true" ]; then
           echo "--> [DOWNLOAD] Installing lightweight Chromium headless shell (~50 MB)..."
           $PW_RUNNER install --only-shell chromium
         else

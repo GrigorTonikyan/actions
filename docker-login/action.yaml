@@ -2,9 +2,9 @@ name: "Docker Container Registry Login"
 description: "Secure, zero-warning composite action for authenticating with container registries in Gitea Actions"
 inputs:
   registry:
-    description: "Server address of Docker registry (default: git.gt-web-dev.com)"
+    description: "Server address of Docker registry (defaults to GITHUB_SERVER_URL host)"
     required: false
-    default: "git.gt-web-dev.com"
+    default: ""
   username:
     description: "Username used to log against the Docker registry"
     required: false
@@ -20,10 +20,29 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Resolve Target Registry Host
+      id: prep
+      shell: bash
+      env:
+        INPUT_REGISTRY: ${{ inputs.registry }}
+      run: |
+        set -euo pipefail
+        TARGET_REGISTRY="${INPUT_REGISTRY}"
+        if [ -z "$TARGET_REGISTRY" ] && [ -n "${GITHUB_SERVER_URL:-}" ]; then
+          TARGET_REGISTRY="${GITHUB_SERVER_URL#https://}"
+          TARGET_REGISTRY="${TARGET_REGISTRY#http://}"
+          TARGET_REGISTRY="${TARGET_REGISTRY%%/*}"
+        fi
+        if [ -z "$TARGET_REGISTRY" ]; then
+          echo "::error::Registry input is empty and GITHUB_SERVER_URL is not set."
+          exit 1
+        fi
+        echo "registry=${TARGET_REGISTRY}" >> "$GITHUB_OUTPUT"
+
     - name: Authenticate with Container Registry
-      uses: docker/login-action@v3
+      uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
       with:
-        registry: ${{ inputs.registry }}
+        registry: ${{ steps.prep.outputs.registry }}
         username: ${{ inputs.username }}
         password: ${{ inputs.password }}
         logout: ${{ inputs.logout }}

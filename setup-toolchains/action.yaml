@@ -53,50 +53,9 @@ outputs:
 runs:
   using: "composite"
   steps:
-    # Note: replace with self:gt-dev/actions/setup-tls-ca@v1 once gt-dev/actions#31 lands.
     - name: Configure Internal Loopback TLS CA Trust
       if: ${{ inputs.configure-tls-ca == 'true' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        SERVER_HOST="${GITHUB_SERVER_URL:-}"
-        SERVER_HOST="${SERVER_HOST#https://}"
-        SERVER_HOST="${SERVER_HOST#http://}"
-        SERVER_HOST="${SERVER_HOST%%/*}"
-
-        INTERNAL_CA=""
-        if [ -n "$SERVER_HOST" ] && [ -f "/etc/docker/certs.d/${SERVER_HOST}/ca.crt" ]; then
-          INTERNAL_CA="/etc/docker/certs.d/${SERVER_HOST}/ca.crt"
-        fi
-
-        SYSTEM_CA="/etc/ssl/certs/ca-certificates.crt"
-        PKI_CA="/etc/pki/tls/certs/ca-bundle.crt"
-
-        if [ -n "$INTERNAL_CA" ] && [ -f "$INTERNAL_CA" ]; then
-          CA_BUNDLE="$(mktemp "${RUNNER_TEMP:-/tmp}/runner-ca-bundle.XXXXXX.crt")"
-          if [ -n "${NODE_EXTRA_CA_CERTS:-}" ] && [ -f "$NODE_EXTRA_CA_CERTS" ]; then
-            cat "$NODE_EXTRA_CA_CERTS" "$INTERNAL_CA" > "$CA_BUNDLE"
-          elif [ -f "$SYSTEM_CA" ]; then
-            cat "$SYSTEM_CA" "$INTERNAL_CA" > "$CA_BUNDLE"
-          elif [ -f "$PKI_CA" ]; then
-            cat "$PKI_CA" "$INTERNAL_CA" > "$CA_BUNDLE"
-          else
-            cp "$INTERNAL_CA" "$CA_BUNDLE"
-          fi
-          chmod 0644 "$CA_BUNDLE"
-          echo "NODE_EXTRA_CA_CERTS=${CA_BUNDLE}" >> "$GITHUB_ENV"
-          echo "SSL_CERT_FILE=${CA_BUNDLE}" >> "$GITHUB_ENV"
-          echo "CURL_CA_BUNDLE=${CA_BUNDLE}" >> "$GITHUB_ENV"
-          echo "--> [TLS] Configured CA trust bundle with internal CA for ${SERVER_HOST}"
-        elif [ -z "${NODE_EXTRA_CA_CERTS:-}" ]; then
-          if [ -f "$SYSTEM_CA" ]; then
-            echo "NODE_EXTRA_CA_CERTS=${SYSTEM_CA}" >> "$GITHUB_ENV"
-            echo "--> [TLS] Configured NODE_EXTRA_CA_CERTS=${SYSTEM_CA}"
-          elif [ -f "$PKI_CA" ]; then
-            echo "NODE_EXTRA_CA_CERTS=${PKI_CA}" >> "$GITHUB_ENV"
-            echo "--> [TLS] Configured NODE_EXTRA_CA_CERTS=${PKI_CA}"
-          fi
-        fi
+      uses: self:gt-dev/actions/setup-tls-ca@v1
 
     - name: Detect Pre-Installed Bun Runtime
       id: detect-bun
@@ -151,7 +110,7 @@ runs:
 
     - name: Set up Python
       if: ${{ inputs.uv == 'true' }}
-      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: ${{ inputs.python-version }}
 

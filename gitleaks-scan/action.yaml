@@ -6,9 +6,9 @@ inputs:
     required: false
     default: "8.30.1"
   sha256:
-    description: "Expected SHA256 checksum (optional verification)"
+    description: "Optional expected SHA256 checksum override (defaults to pinned SSoT digest or release checksums lookup)"
     required: false
-    default: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+    default: ""
   redact:
     description: "Redact leaked secrets in output"
     required: false
@@ -23,26 +23,73 @@ runs:
   steps:
     - name: Install Pinned & Verified Gitleaks
       shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_SHA256: ${{ inputs.sha256 }}
       run: |
+        set -euo pipefail
+        PINNED_VERSION="8.30.1"
+        PINNED_SHA256="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+
+        RAW_VERSION="${INPUT_VERSION:-$PINNED_VERSION}"
+        SEMVER="${RAW_VERSION#v}"
+        TAG_VERSION="v${SEMVER}"
+
+        if command -v gitleaks >/dev/null 2>&1; then
+          CURRENT_VER="$(gitleaks version 2>/dev/null | head -n1 | tr -d ' \r\n' || true)"
+          CURRENT_VER="${CURRENT_VER#v}"
+          if [ "$CURRENT_VER" = "$SEMVER" ]; then
+            echo "--> [FAST-PATH] Gitleaks ${CURRENT_VER} is already installed and available in PATH."
+            exit 0
+          fi
+        fi
+
         SUDO=""
         if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
           SUDO="sudo"
         fi
-        curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${{ inputs.version }}/gitleaks_${{ inputs.version }}_linux_x64.tar.gz" -o gitleaks.tar.gz
-        if [ -n "${{ inputs.sha256 }}" ]; then
-          echo "${{ inputs.sha256 }}  gitleaks.tar.gz" | sha256sum -c -
+
+        ARCHIVE_NAME="gitleaks_${SEMVER}_linux_x64.tar.gz"
+        BASE_URL="https://github.com/gitleaks/gitleaks/releases/download/${TAG_VERSION}"
+        TMP_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/gitleaks-setup.XXXXXX")"
+        trap 'rm -rf "$TMP_DIR"' EXIT
+
+        echo "--> Downloading Gitleaks ${TAG_VERSION}..."
+        curl -fsSL "${BASE_URL}/${ARCHIVE_NAME}" -o "${TMP_DIR}/${ARCHIVE_NAME}"
+
+        EXPECTED_SHA256="${INPUT_SHA256:-}"
+        if [ -z "$EXPECTED_SHA256" ] && [ "$SEMVER" = "$PINNED_VERSION" ]; then
+          EXPECTED_SHA256="$PINNED_SHA256"
         fi
-        tar -xzf gitleaks.tar.gz gitleaks
-        chmod +x gitleaks
-        $SUDO mv gitleaks /usr/local/bin/gitleaks
-        rm -f gitleaks.tar.gz
+
+        if [ -n "$EXPECTED_SHA256" ]; then
+          echo "${EXPECTED_SHA256}  ${TMP_DIR}/${ARCHIVE_NAME}" | sha256sum -c -
+        else
+          CHECKSUMS_NAME="gitleaks_${SEMVER}_checksums.txt"
+          curl -fsSL "${BASE_URL}/${CHECKSUMS_NAME}" -o "${TMP_DIR}/${CHECKSUMS_NAME}"
+          EXPECTED_SHA256="$(awk -v file="$ARCHIVE_NAME" '$2 == file || $2 == ("*" file) || $2 == ("./" file) { print $1; exit }' "${TMP_DIR}/${CHECKSUMS_NAME}")"
+          if [ -z "$EXPECTED_SHA256" ]; then
+            echo "::error::Checksum entry for ${ARCHIVE_NAME} not found in ${CHECKSUMS_NAME}"
+            exit 1
+          fi
+          echo "${EXPECTED_SHA256}  ${TMP_DIR}/${ARCHIVE_NAME}" | sha256sum -c -
+        fi
+
+        tar -xzf "${TMP_DIR}/${ARCHIVE_NAME}" -C "$TMP_DIR" gitleaks
+        chmod +x "${TMP_DIR}/gitleaks"
+        $SUDO mv "${TMP_DIR}/gitleaks" /usr/local/bin/gitleaks
         gitleaks version
 
     - name: Execute Gitleaks Scan
       shell: bash
+      env:
+        INPUT_REDACT: ${{ inputs.redact }}
+        INPUT_SOURCE: ${{ inputs.source }}
       run: |
+        set -euo pipefail
         REDACT_FLAG=""
-        if [ "${{ inputs.redact }}" = "true" ]; then
+        if [ "$INPUT_REDACT" = "true" ]; then
           REDACT_FLAG="--redact"
         fi
-        gitleaks dir ${{ inputs.source }} $REDACT_FLAG -v
+        TARGET_SOURCE="${INPUT_SOURCE:-.}"
+        gitleaks dir "$TARGET_SOURCE" $REDACT_FLAG -v

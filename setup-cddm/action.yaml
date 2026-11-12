@@ -4,11 +4,19 @@ inputs:
   version:
     description: "CDDM version to install"
     required: false
-    default: "v4.8.0"
+    default: "v4.9.2"
   sha256:
-    description: "Expected SHA256 checksum for binary tarball"
+    description: "Optional expected SHA256 checksum override (defaults to pinned SSoT digest or release SHA256SUMS.txt lookup)"
     required: false
-    default: "ca8f7219549523b8d631f3c6557dfba79dca0fe5f8f434223616c96c456b52fd"
+    default: ""
+  repository:
+    description: "Gitea owner/repository hosting CDDM releases (defaults to '<github.repository_owner>/cddm')"
+    required: false
+    default: "${{ github.repository_owner }}/cddm"
+  server-url:
+    description: "Gitea server base URL hosting CDDM releases (defaults to github.server_url)"
+    required: false
+    default: "${{ github.server_url }}"
   destination:
     description: "Target binary installation directory"
     required: false
@@ -17,42 +25,87 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Configure TLS CA Certificate Trust
+      uses: self:gt-dev/actions/setup-tls-ca@v1
+
     - name: Install Pinned & Verified CDDM Binary
       shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_SHA256: ${{ inputs.sha256 }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_SERVER_URL: ${{ inputs.server-url }}
+        INPUT_DESTINATION: ${{ inputs.destination }}
       run: |
+        set -euo pipefail
+        PINNED_VERSION="v4.9.2"
+        PINNED_SHA256="ab4c391822e2eeb824e580d08e1d2d9e4ea8699861e1cf95c5ce910e316ab9f6"
+
         SUDO=""
         if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
           SUDO="sudo"
         fi
 
-        RAW_VERSION="${{ inputs.version }}"
+        RAW_VERSION="${INPUT_VERSION:-$PINNED_VERSION}"
         SEMVER="${RAW_VERSION#v}"
         TAG_VERSION="v${SEMVER}"
 
         if command -v cddm >/dev/null 2>&1; then
-          CURRENT_VER=$(cddm --version 2>&1 | awk '{print $2}' || true)
+          CURRENT_VER="$(cddm --version 2>&1 | awk '{print $2}' || true)"
           if [ "$CURRENT_VER" = "$SEMVER" ] || [ "$CURRENT_VER" = "$TAG_VERSION" ]; then
-            echo "CDDM ${CURRENT_VER} is already installed and available in PATH."
+            echo "--> [FAST-PATH] CDDM ${CURRENT_VER} is already installed and available in PATH."
             exit 0
           fi
         fi
 
-        TARGET_DIR="${{ inputs.destination }}"
+        BASE_URL="${INPUT_SERVER_URL:-${GITHUB_SERVER_URL:-}}"
+        BASE_URL="${BASE_URL%/}"
+        if [ -z "$BASE_URL" ]; then
+          echo "::error::Unable to resolve Gitea server URL for CDDM download."
+          exit 1
+        fi
+
+        REPO_SLUG="${INPUT_REPOSITORY:-}"
+        if [ -z "$REPO_SLUG" ] || [ "$REPO_SLUG" = "/cddm" ]; then
+          if [ -n "${GITHUB_REPOSITORY_OWNER:-}" ]; then
+            REPO_SLUG="${GITHUB_REPOSITORY_OWNER}/cddm"
+          else
+            echo "::error::Unable to resolve repository owner for CDDM download."
+            exit 1
+          fi
+        fi
+
+        TARGET_DIR="${INPUT_DESTINATION:-/usr/local/bin}"
         $SUDO mkdir -p "$TARGET_DIR"
 
         ARCHIVE_NAME="cddm-${TAG_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-        DOWNLOAD_URL="https://git.gt-web-dev.com/gt-dev/cddm/releases/download/${TAG_VERSION}/${ARCHIVE_NAME}"
-        TMP_DIR="/tmp/cddm-setup-${SEMVER}"
-        mkdir -p "$TMP_DIR"
+        DOWNLOAD_BASE_URL="${BASE_URL}/${REPO_SLUG}/releases/download/${TAG_VERSION}"
+        DOWNLOAD_URL="${DOWNLOAD_BASE_URL}/${ARCHIVE_NAME}"
+        TMP_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/cddm-setup.XXXXXX")"
+        trap 'rm -rf "$TMP_DIR"' EXIT
 
         echo "--> Downloading CDDM ${TAG_VERSION} from ${DOWNLOAD_URL}..."
-        curl -sSL "$DOWNLOAD_URL" -o "${TMP_DIR}/${ARCHIVE_NAME}"
-        if [ -n "${{ inputs.sha256 }}" ]; then
-          echo "${{ inputs.sha256 }}  ${TMP_DIR}/${ARCHIVE_NAME}" | sha256sum -c -
+        curl -fsSL "$DOWNLOAD_URL" -o "${TMP_DIR}/${ARCHIVE_NAME}"
+
+        EXPECTED_SHA256="${INPUT_SHA256:-}"
+        if [ -z "$EXPECTED_SHA256" ] && [ "$TAG_VERSION" = "$PINNED_VERSION" ]; then
+          EXPECTED_SHA256="$PINNED_SHA256"
+        fi
+
+        if [ -n "$EXPECTED_SHA256" ]; then
+          echo "${EXPECTED_SHA256}  ${TMP_DIR}/${ARCHIVE_NAME}" | sha256sum -c -
+        else
+          echo "--> Fetching SHA256SUMS.txt for ${TAG_VERSION}..."
+          curl -fsSL "${DOWNLOAD_BASE_URL}/SHA256SUMS.txt" -o "${TMP_DIR}/SHA256SUMS.txt"
+          EXPECTED_SHA256="$(awk -v file="$ARCHIVE_NAME" '$2 == file || $2 == ("*" file) || $2 == ("./" file) { print $1; exit }' "${TMP_DIR}/SHA256SUMS.txt")"
+          if [ -z "$EXPECTED_SHA256" ]; then
+            echo "::error::Checksum entry for ${ARCHIVE_NAME} not found in ${TAG_VERSION} SHA256SUMS.txt"
+            exit 1
+          fi
+          echo "${EXPECTED_SHA256}  ${TMP_DIR}/${ARCHIVE_NAME}" | sha256sum -c -
         fi
 
         $SUDO tar -xzf "${TMP_DIR}/${ARCHIVE_NAME}" -C "$TARGET_DIR"
-        rm -rf "$TMP_DIR"
         $SUDO chmod +x "${TARGET_DIR}"/cddm*
 
         if ! command -v cddm >/dev/null 2>&1 && [ -f "${TARGET_DIR}/cddm" ]; then

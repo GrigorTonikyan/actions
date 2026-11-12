@@ -178,9 +178,27 @@ for action_file in $ACTION_FILES; do
     FAILED=1
   fi
 
+  if grep -q "git\.gt-web-dev\.com" "$action_file"; then
+    echo "::error file=$action_file::Hardcoded internal hostname detected in $action_file; derive dynamically from GITHUB_SERVER_URL"
+    FAILED=1
+  fi
+
+  while IFS= read -r uses_line; do
+    uses_ref="$(printf '%s\n' "$uses_line" | sed -E 's/^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*//; s/[[:space:]]+#.*$//' | tr -d "\"'\r ")"
+    case "$uses_ref" in
+      builtin:*|self:*|./*)
+        continue
+        ;;
+    esac
+    if ! printf '%s\n' "$uses_ref" | grep -qE '@[0-9a-f]{40}$'; then
+      echo "::error file=$action_file::Third-party action '${uses_ref}' must be pinned to an immutable 40-character commit SHA"
+      FAILED=1
+    fi
+  done < <(grep -E '^[[:space:]]*-?[[:space:]]*uses:[[:space:]]+' "$action_file" | tr -d '\r')
+
   if [[ "$action_file" == *"upload-artifact"* || "$action_file" == *"download-artifact"* ]]; then
-    if ! grep -q "NODE_EXTRA_CA_CERTS" "$action_file"; then
-      echo "::error file=$action_file::$action_file must configure NODE_EXTRA_CA_CERTS for secure internal loopback artifact transfer"
+    if ! grep -q "setup-tls-ca" "$action_file" && ! grep -q "NODE_EXTRA_CA_CERTS" "$action_file"; then
+      echo "::error file=$action_file::$action_file must configure TLS CA trust via setup-tls-ca or NODE_EXTRA_CA_CERTS"
       FAILED=1
     fi
   fi
@@ -188,6 +206,10 @@ for action_file in $ACTION_FILES; do
   if [[ "$action_file" == *"setup-toolchains"* ]]; then
     if grep -E "astral-sh/setup-uv@v(8|9|10)$" "$action_file" >/dev/null 2>&1; then
       echo "::error file=$action_file::setup-toolchains references invalid floating setup-uv tag without semver patch"
+      FAILED=1
+    fi
+    if ! grep -q "setup-tls-ca" "$action_file"; then
+      echo "::error file=$action_file::setup-toolchains must delegate internal CA setup to setup-tls-ca"
       FAILED=1
     fi
     if ! grep -q "nextjs-cache:" "$action_file"; then
@@ -198,7 +220,6 @@ for action_file in $ACTION_FILES; do
       echo "::error file=$action_file::setup-toolchains must detect pre-installed Bun fast-path"
       FAILED=1
     fi
-    check_no_template_injection_in_run "$action_file" "error"
   elif [[ "$action_file" == *"docker-build-push"* ]]; then
     if ! grep -q "DOCKER_BUILD_SUMMARY" "$action_file" || ! grep -q "DOCKER_BUILD_RECORD_UPLOAD" "$action_file"; then
       echo "::error file=$action_file::docker-build-push must configure DOCKER_BUILD_SUMMARY and DOCKER_BUILD_RECORD_UPLOAD"
@@ -212,24 +233,42 @@ for action_file in $ACTION_FILES; do
       echo "::error file=$action_file::docker-build-push must support BUILDKIT_INLINE_CACHE=1"
       FAILED=1
     fi
-    check_no_template_injection_in_run "$action_file" "error"
-  elif [[ "$action_file" == *"setup-cddm"* || "$action_file" == *"gitleaks-scan"* || "$action_file" == *"setup-playwright"* ]]; then
-    check_no_template_injection_in_run "$action_file" "warn"
-  else
-    check_no_template_injection_in_run "$action_file" "error"
   fi
+
+  check_no_template_injection_in_run "$action_file" "error"
 done
 
-# 2. Validate CDDM setup action checksum and semver format
-echo "--> [2/6] Validating CDDM setup action checksum..."
+# 2. Validate pinned binary installers & TLS CA action
+echo "--> [2/6] Validating pinned binary installer checksums..."
+if [ ! -f "setup-tls-ca/action.yaml" ]; then
+  echo "::error file=setup-tls-ca/action.yaml::Missing required setup-tls-ca composite action"
+  FAILED=1
+fi
+
 CDDM_ACTION="setup-cddm/action.yaml"
 if [ -f "$CDDM_ACTION" ]; then
-  DEFAULT_SHA="$(grep -A 5 "sha256:" "$CDDM_ACTION" | grep "default:" | head -n1 | awk -F'"' '{print $2}')"
-  if [ -z "$DEFAULT_SHA" ] || [ "${#DEFAULT_SHA}" -ne 64 ]; then
-    echo "::error file=$CDDM_ACTION::setup-cddm default SHA256 checksum must be a valid 64-character hexadecimal digest"
+  DEFAULT_CDDM_VER="$(grep -A 5 "^  version:" "$CDDM_ACTION" | grep "default:" | head -n1 | awk -F'"' '{print $2}')"
+  PINNED_CDDM_SHA="$(grep 'PINNED_SHA256="' "$CDDM_ACTION" | head -n1 | awk -F'"' '{print $2}')"
+  if [ -z "$DEFAULT_CDDM_VER" ] || ! printf '%s\n' "$DEFAULT_CDDM_VER" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "::error file=$CDDM_ACTION::setup-cddm default version must be a valid semver tag (found '${DEFAULT_CDDM_VER:-unset}')"
+    FAILED=1
+  fi
+  if [ -z "$PINNED_CDDM_SHA" ] || ! printf '%s\n' "$PINNED_CDDM_SHA" | grep -qE '^[0-9a-f]{64}$'; then
+    echo "::error file=$CDDM_ACTION::setup-cddm PINNED_SHA256 must be a valid 64-character hexadecimal digest"
     FAILED=1
   else
-    echo "    Verified setup-cddm SHA256 default digest (${#DEFAULT_SHA} chars): $DEFAULT_SHA"
+    echo "    Verified setup-cddm SSoT (${DEFAULT_CDDM_VER} -> ${PINNED_CDDM_SHA})."
+  fi
+fi
+
+GITLEAKS_ACTION="gitleaks-scan/action.yaml"
+if [ -f "$GITLEAKS_ACTION" ]; then
+  PINNED_GL_SHA="$(grep 'PINNED_SHA256="' "$GITLEAKS_ACTION" | head -n1 | awk -F'"' '{print $2}')"
+  if [ -z "$PINNED_GL_SHA" ] || ! printf '%s\n' "$PINNED_GL_SHA" | grep -qE '^[0-9a-f]{64}$'; then
+    echo "::error file=$GITLEAKS_ACTION::gitleaks-scan PINNED_SHA256 must be a valid 64-character hexadecimal digest"
+    FAILED=1
+  else
+    echo "    Verified gitleaks-scan SSoT digest (${PINNED_GL_SHA})."
   fi
 fi
 
@@ -378,9 +417,10 @@ if [ -f "examples/nextjs/next.config.ts" ] && ! grep -q "turbopackFileSystemCach
   FAILED=1
 fi
 
-# 5. Enforce pure ASCII (zero emojis) in actions, workflows, scripts, and examples
-echo "--> [5/6] Checking for non-ASCII / emoji characters in workflows, actions & scripts..."
-TEXT_TARGETS="$(find .gitea/workflows scripts examples docker-build-push setup-toolchains -type f 2>/dev/null | sort)"
+# 5. Enforce pure ASCII (zero emojis) in actions, workflows, scripts, containers, and examples
+echo "--> [5/6] Checking for non-ASCII / emoji characters in workflows, actions, containers & scripts..."
+TEXT_TARGETS="$(find .gitea/workflows scripts examples containers -type f 2>/dev/null ; find . -maxdepth 2 \( -name "action.yaml" -o -name "action.yml" \))"
+TEXT_TARGETS="$(printf '%s\n' "$TEXT_TARGETS" | sort -u)"
 for tf in $TEXT_TARGETS; do
   if LC_ALL=C grep -n '[^[:print:][:space:]]' "$tf" >/dev/null 2>&1; then
     echo "::error file=$tf::Non-ASCII or emoji character detected in $tf"
