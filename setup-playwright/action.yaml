@@ -37,7 +37,7 @@ runs:
         fi
 
         if [ -z "$PW_VERSION" ]; then
-          PW_VERSION="1.65.0"
+          PW_VERSION="1.65.1"
         fi
 
         echo "version=${PW_VERSION}" >> $GITHUB_OUTPUT

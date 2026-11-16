@@ -127,15 +127,15 @@ runs:
         RAW_LOWER="$(printf '%s' "$RAW_VERSION" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
 
         if [ -z "$RAW_LOWER" ] || [ "$RAW_LOWER" = "latest" ]; then
-          API_URL="${BASE_URL}/api/v1/repos/${REPO_SLUG}/releases/latest"
-          META_FILE="${TMP_DIR}/release.json"
+          API_URL="${BASE_URL}/api/v1/repos/${REPO_SLUG}/releases?limit=15"
+          META_FILE="${TMP_DIR}/releases.json"
           if ! curl -fsSL "${CURL_AUTH_ARGS[@]}" "$API_URL" -o "$META_FILE"; then
             DEFAULT_OWNER_REPO="${GITHUB_REPOSITORY_OWNER:-}/cddm"
             ACTION_OWNER="${GITHUB_ACTION_REPOSITORY:-}"
             ACTION_OWNER="${ACTION_OWNER%%/*}"
             if [ -n "$ACTION_OWNER" ] && [ "$REPO_SLUG" = "$DEFAULT_OWNER_REPO" ] && [ "${ACTION_OWNER}/cddm" != "$REPO_SLUG" ]; then
               FALLBACK_REPO="${ACTION_OWNER}/cddm"
-              FALLBACK_URL="${BASE_URL}/api/v1/repos/${FALLBACK_REPO}/releases/latest"
+              FALLBACK_URL="${BASE_URL}/api/v1/repos/${FALLBACK_REPO}/releases?limit=15"
               if curl -fsSL "${CURL_AUTH_ARGS[@]}" "$FALLBACK_URL" -o "$META_FILE"; then
                 REPO_SLUG="$FALLBACK_REPO"
                 API_URL="$FALLBACK_URL"
@@ -149,20 +149,55 @@ runs:
             fi
           fi
 
+          RESOLVED_TAG=""
+          NEWEST_TAG=""
           if command -v jq >/dev/null 2>&1; then
-            RESOLVED_TAG="$(jq -r '.tag_name // empty' "$META_FILE" | head -n1 | tr -d ' \r\n')"
+            NEWEST_TAG="$(jq -r '(if type == "array" then . else [.] end) | map(select((.draft // false | not) and (.prerelease // false | not))) | .[0].tag_name // empty' "$META_FILE" | head -n1 | tr -d ' \r\n')"
+            RESOLVED_TAG="$(jq -r --arg arch "$TARGET_ARCH" --arg pinned "$PINNED_VERSION" '
+              (if type == "array" then . else [.] end)
+              | map(
+                  select((.draft // false | not) and (.prerelease // false | not))
+                  | select(.tag_name != null and (.assets | type == "array"))
+                  | . as $rel
+                  | ("cddm-" + $rel.tag_name + "-" + $arch + "-unknown-linux-gnu.tar.gz") as $tar
+                  | select(
+                      ($rel.assets | map(.name) | index($tar)) != null
+                      and (
+                        ($rel.assets | map(.name) | index("SHA256SUMS.txt")) != null
+                        or $rel.tag_name == $pinned
+                      )
+                    )
+                  | .tag_name
+                )
+              | .[0] // empty' "$META_FILE" | head -n1 | tr -d ' \r\n')"
           else
-            RESOLVED_TAG="$(grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' "$META_FILE" | head -n1 | sed -E 's/.*"([^"]+)"$/\1/' | tr -d ' \r\n')"
+            CANDIDATE_TAGS="$(grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' "$META_FILE" | sed -E 's/.*"([^"]+)"$/\1/' | tr -d '\r')"
+            NEWEST_TAG="$(printf '%s\n' "$CANDIDATE_TAGS" | head -n1 | tr -d ' \r\n')"
+            for cand_tag in $CANDIDATE_TAGS; do
+              printf '%s\n' "$cand_tag" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$' || continue
+              cand_base="${BASE_URL}/${REPO_SLUG}/releases/download/${cand_tag}"
+              cand_tar="cddm-${cand_tag}-${TARGET_ARCH}-unknown-linux-gnu.tar.gz"
+              if curl -fsSLI "${CURL_AUTH_ARGS[@]}" "${cand_base}/${cand_tar}" >/dev/null 2>&1; then
+                if [ "$cand_tag" = "$PINNED_VERSION" ] || curl -fsSLI "${CURL_AUTH_ARGS[@]}" "${cand_base}/SHA256SUMS.txt" >/dev/null 2>&1; then
+                  RESOLVED_TAG="$cand_tag"
+                  break
+                fi
+              fi
+            done
           fi
 
           if [ -z "$RESOLVED_TAG" ] || ! printf '%s\n' "$RESOLVED_TAG" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
-            echo "::error::Could not resolve valid release tag_name from ${API_URL} (got '${RESOLVED_TAG:-empty}'). Refusing silent version downgrade."
+            echo "::error::Could not resolve a ready release with ${TARGET_ARCH} binary and checksum assets from ${API_URL} (newest tag '${NEWEST_TAG:-empty}', resolved '${RESOLVED_TAG:-empty}'). Refusing silent version downgrade."
             exit 1
           fi
 
           SEMVER="${RESOLVED_TAG#v}"
           TAG_VERSION="v${SEMVER}"
-          echo "--> [LATEST] Resolved latest CDDM release: ${TAG_VERSION} (from ${REPO_SLUG})."
+          if [ -n "$NEWEST_TAG" ] && [ "$TAG_VERSION" != "$NEWEST_TAG" ]; then
+            echo "--> [LATEST] Skipping incomplete release ${NEWEST_TAG} (target assets pending); resolved latest ready CDDM release: ${TAG_VERSION} (from ${REPO_SLUG})."
+          else
+            echo "--> [LATEST] Resolved latest CDDM release: ${TAG_VERSION} (from ${REPO_SLUG})."
+          fi
         else
           CLEAN_VERSION="$(printf '%s' "$RAW_VERSION" | tr -d ' \r\n')"
           if ! printf '%s\n' "$CLEAN_VERSION" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
