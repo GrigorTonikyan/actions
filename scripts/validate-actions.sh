@@ -137,7 +137,7 @@ check_dockerfile_invariants() {
 }
 
 # 1. Validate composite action manifests
-echo "--> [1/6] Validating composite action manifests..."
+echo "--> [1/7] Validating composite action manifests..."
 ACTION_FILES="$(find . -maxdepth 2 \( -name "action.yaml" -o -name "action.yml" \) | sort)"
 
 for action_file in $ACTION_FILES; do
@@ -241,6 +241,10 @@ for action_file in $ACTION_FILES; do
       echo "::error file=$action_file::docker-build-push must support BUILDKIT_INLINE_CACHE=1"
       FAILED=1
     fi
+    if ! grep -q "SUPPORTS_CACHE_EXPORT" "$action_file"; then
+      echo "::error file=$action_file::docker-build-push must detect driver cache-export capability and guard unsupported --cache-to modes"
+      FAILED=1
+    fi
   elif [[ "$action_file" == *"publish-release"* ]]; then
     if ! grep -q "setup-tls-ca" "$action_file"; then
       echo "::error file=$action_file::publish-release must configure TLS CA trust via setup-tls-ca"
@@ -264,7 +268,7 @@ for action_file in $ACTION_FILES; do
 done
 
 # 2. Validate pinned binary installers & TLS CA action
-echo "--> [2/6] Validating pinned binary installer checksums..."
+echo "--> [2/7] Validating pinned binary installer checksums..."
 if [ ! -f "setup-tls-ca/action.yaml" ]; then
   echo "::error file=setup-tls-ca/action.yaml::Missing required setup-tls-ca composite action"
   FAILED=1
@@ -298,7 +302,7 @@ if [ -f "$GITLEAKS_ACTION" ]; then
 fi
 
 # 3. Validate Container SSoTs, Digests & .dockerignore
-echo "--> [3/6] Validating container SSoT versions, immutable digests & .dockerignore..."
+echo "--> [3/7] Validating container SSoT versions, immutable digests & .dockerignore..."
 if [ ! -f ".dockerignore" ]; then
   echo "::error file=.dockerignore::Missing repository root .dockerignore"
   FAILED=1
@@ -410,7 +414,7 @@ else
 fi
 
 # 4. Validate Workflows & Reference Next.js Templates
-echo "--> [4/6] Validating workflows and examples/nextjs reference templates..."
+echo "--> [4/7] Validating workflows and examples/nextjs reference templates..."
 WORKFLOW_FILES="$(find .gitea/workflows examples -type f \( -name "*.yaml" -o -name "*.yml" \) 2>/dev/null | sort)"
 for wf in $WORKFLOW_FILES; do
   echo "    Checking $wf..."
@@ -471,7 +475,7 @@ if [ -f "examples/nextjs/next.config.ts" ] && ! grep -q "turbopackFileSystemCach
 fi
 
 # 5. Enforce pure ASCII (zero emojis) in actions, workflows, scripts, containers, and examples
-echo "--> [5/6] Checking for non-ASCII / emoji characters in workflows, actions, containers & scripts..."
+echo "--> [5/7] Checking for non-ASCII / emoji characters in workflows, actions, containers & scripts..."
 TEXT_TARGETS="$(find .gitea/workflows scripts examples containers -type f 2>/dev/null ; find . -maxdepth 2 \( -name "action.yaml" -o -name "action.yml" \))"
 TEXT_TARGETS="$(printf '%s\n' "$TEXT_TARGETS" | sort -u)"
 for tf in $TEXT_TARGETS; do
@@ -482,13 +486,20 @@ for tf in $TEXT_TARGETS; do
 done
 
 # 6. Check for forbidden raw JavaScript files
-echo "--> [6/6] Checking for forbidden file extensions..."
+echo "--> [6/7] Checking for forbidden file extensions..."
 FORBIDDEN_FILES="$(find . -not -path "*/.git/*" \( -name "*.js" -o -name "*.cjs" -o -name "*.mjs" \) 2>/dev/null || true)"
 if [ -n "$FORBIDDEN_FILES" ]; then
   echo "::error::Forbidden JavaScript files detected: $FORBIDDEN_FILES"
   FAILED=1
 else
   echo "    Zero raw JavaScript files detected."
+fi
+
+# 7. Execute unit tests for docker-build-push prep logic
+echo "--> [7/7] Running docker-build-push unit test suite..."
+if ! bash ./scripts/test-docker-build-push.sh; then
+  echo "::error::docker-build-push unit tests failed"
+  FAILED=1
 fi
 
 if [ "$FAILED" -ne 0 ]; then

@@ -58,7 +58,7 @@ inputs:
     required: false
     default: ""
   cache-mode:
-    description: "Optional BuildKit cache preset (none, inline, gha, registry, local)"
+    description: "Optional BuildKit cache preset (none, inline, gha, registry, local); downgrades unsupported --cache-to exports to inline cache on native docker drivers without containerd image store"
     required: false
     default: ""
   cache-ref:
@@ -304,14 +304,13 @@ runs:
           exit 1
         fi
 
-        INSPECT_OUT="$(docker buildx inspect 2>/dev/null || true)"
-        ACTIVE_BUILDER="$(printf '%s\n' "$INSPECT_OUT" | awk -F': *' '/^Name:/ {print $2; exit}')"
-        ACTIVE_DRIVER="$(printf '%s\n' "$INSPECT_OUT" | awk -F': *' '/^Driver:/ {print $2; exit}')"
+        INSPECT_OUT="$(DEBUG=1 docker buildx inspect 2>/dev/null | tr -d '\r' || true)"
+        ACTIVE_BUILDER="$(printf '%s\n' "$INSPECT_OUT" | awk '/^Name:/ {sub(/^[^:]*:[[:space:]]*/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit}')"
+        ACTIVE_DRIVER="$(printf '%s\n' "$INSPECT_OUT" | awk '/^Driver:/ {sub(/^[^:]*:[[:space:]]*/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit}')"
 
         TARGET_BUILDER=""
         if [ "${INPUT_ALLOW_CUSTOM_BUILDER}" = "true" ]; then
           TARGET_BUILDER="${INPUT_BUILDER}"
-          echo "--> [BUILDX] Custom builder override enabled (builder='${TARGET_BUILDER:-<active>}')."
         else
           if [ -n "$INPUT_BUILDER" ] && [ "$INPUT_BUILDER" != "default" ]; then
             echo "::error::Custom builder '${INPUT_BUILDER}' is blocked on native DinD runners. Use the native 'default' builder (without docker/setup-buildx-action) to preserve /etc/docker/certs.d CA trust and loopback routing, or set allow-custom-builder: 'true'."
@@ -330,7 +329,38 @@ runs:
           if docker buildx ls 2>/dev/null | grep -q 'docker-container'; then
             echo "::warning::Detected non-default docker-container builder(s) on native DinD runner; forcing builder '${TARGET_BUILDER:-active}'."
           fi
-          echo "--> [BUILDX] Verified native Docker engine (builder='${TARGET_BUILDER:-${ACTIVE_BUILDER:-default}}', driver='${ACTIVE_DRIVER:-docker}')."
+        fi
+
+        TARGET_INSPECT="$INSPECT_OUT"
+        if [ -n "$TARGET_BUILDER" ] && [ "$TARGET_BUILDER" != "$ACTIVE_BUILDER" ]; then
+          TARGET_INSPECT="$(DEBUG=1 docker buildx inspect "$TARGET_BUILDER" 2>/dev/null | tr -d '\r' || true)"
+          TARGET_DRIVER="$(printf '%s\n' "$TARGET_INSPECT" | awk '/^Driver:/ {sub(/^[^:]*:[[:space:]]*/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit}')"
+        else
+          TARGET_DRIVER="$ACTIVE_DRIVER"
+        fi
+        if [ "${INPUT_ALLOW_CUSTOM_BUILDER}" != "true" ]; then
+          TARGET_DRIVER="${TARGET_DRIVER:-docker}"
+        fi
+
+        CACHE_EXPORT_FEATURE="$(printf '%s\n' "$TARGET_INSPECT" | awk -F':[[:space:]]*' '/^[[:space:]]*Cache export:/ {gsub(/[[:space:]]/, "", $2); print tolower($2); exit}')"
+        SUPPORTS_CACHE_EXPORT="true"
+        if [ "$CACHE_EXPORT_FEATURE" = "false" ]; then
+          SUPPORTS_CACHE_EXPORT="false"
+        elif [ "$CACHE_EXPORT_FEATURE" = "true" ]; then
+          SUPPORTS_CACHE_EXPORT="true"
+        elif [ "$TARGET_DRIVER" = "docker" ]; then
+          if printf '%s\n' "$TARGET_INSPECT" | grep -q 'org.mobyproject.buildkit.worker.snapshotter' || \
+             docker info --format '{{.DriverStatus}}' 2>/dev/null | grep -qi 'containerd'; then
+            SUPPORTS_CACHE_EXPORT="true"
+          else
+            SUPPORTS_CACHE_EXPORT="false"
+          fi
+        fi
+
+        if [ "${INPUT_ALLOW_CUSTOM_BUILDER}" = "true" ]; then
+          echo "--> [BUILDX] Custom builder override enabled (builder='${TARGET_BUILDER:-${ACTIVE_BUILDER:-<active>}}', driver='${TARGET_DRIVER:-unknown}', cache-export='${SUPPORTS_CACHE_EXPORT}')."
+        else
+          echo "--> [BUILDX] Verified native Docker engine (builder='${TARGET_BUILDER:-${ACTIVE_BUILDER:-default}}', driver='${TARGET_DRIVER}', cache-export='${SUPPORTS_CACHE_EXPORT}')."
         fi
         write_output "builder" "$TARGET_BUILDER"
 
@@ -374,17 +404,21 @@ runs:
         write_output "username" "$TARGET_USERNAME"
 
         # 5. Assemble build-args with BUILDKIT_INLINE_CACHE=1 support
-        BUILD_ARGS_OUT="$(printf '%s\n' "${INPUT_BUILD_ARGS}" | sed '/^[[:space:]]*$/d' || true)"
+        BUILD_ARGS_OUT="$(printf '%s\n' "${INPUT_BUILD_ARGS}" | tr -d '\r' | sed '/^[[:space:]]*$/d' || true)"
         if [ "${INPUT_INLINE_CACHE}" = "true" ] && ! printf '%s\n' "$BUILD_ARGS_OUT" | grep -qE '^BUILDKIT_INLINE_CACHE='; then
           BUILD_ARGS_OUT="$(append_line "$BUILD_ARGS_OUT" "BUILDKIT_INLINE_CACHE=1")"
         fi
-        write_output "build-args" "$BUILD_ARGS_OUT"
 
         # 6. Assemble BuildKit cache-from / cache-to configuration
-        CACHE_FROM_OUT="$(printf '%s\n' "${INPUT_CACHE_FROM}" | sed '/^[[:space:]]*$/d' || true)"
-        CACHE_TO_OUT="$(printf '%s\n' "${INPUT_CACHE_TO}" | sed '/^[[:space:]]*$/d' || true)"
+        CACHE_FROM_OUT="$(printf '%s\n' "${INPUT_CACHE_FROM}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;/^$/d' || true)"
+        CACHE_TO_OUT="$(printf '%s\n' "${INPUT_CACHE_TO}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;/^$/d' || true)"
 
-        FIRST_TAG="$(printf '%s\n' "${INPUT_TAGS}" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d' | head -n1 || true)"
+        NORMALIZED_TAGS="$(printf '%s\n' "${INPUT_TAGS}" | tr -d '\r' | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d' || true)"
+        FIRST_TAG="$(printf '%s\n' "$NORMALIZED_TAGS" | head -n1 || true)"
+        LATEST_TAG="$(printf '%s\n' "$NORMALIZED_TAGS" | grep -E ':latest$' | head -n1 || true)"
+        NON_DIGEST_FIRST_TAG="$(printf '%s\n' "$NORMALIZED_TAGS" | grep -v '@' | head -n1 || true)"
+        INLINE_CACHE_TAG="${LATEST_TAG:-$NON_DIGEST_FIRST_TAG}"
+
         DEFAULT_CACHE_REF=""
         if [ -n "$FIRST_TAG" ]; then
           LAST_SEG="${FIRST_TAG##*/}"
@@ -395,6 +429,19 @@ runs:
           fi
         fi
 
+        ensure_inline_cache_export() {
+          if [ "${INPUT_PUSH}" != "true" ]; then
+            return 0
+          fi
+          if printf '%s\n' "$BUILD_ARGS_OUT" | grep -qE '^BUILDKIT_INLINE_CACHE=(1|true|TRUE)$'; then
+            return 0
+          fi
+          if printf '%s\n' "$CACHE_TO_OUT" | grep -qE '^type=inline([,[:space:]]|$)'; then
+            return 0
+          fi
+          CACHE_TO_OUT="$(append_line "$CACHE_TO_OUT" "type=inline")"
+        }
+
         case "${INPUT_CACHE_MODE}" in
           ""|none)
             ;;
@@ -402,6 +449,7 @@ runs:
             if [ -n "$INPUT_CACHE_REF" ] && [ -z "$CACHE_FROM_OUT" ]; then
               CACHE_FROM_OUT="$(append_line "$CACHE_FROM_OUT" "type=registry,ref=${INPUT_CACHE_REF}")"
             fi
+            ensure_inline_cache_export
             ;;
           registry)
             REG_REF="${INPUT_CACHE_REF:-$DEFAULT_CACHE_REF}"
@@ -411,9 +459,17 @@ runs:
             fi
             if [ -z "$CACHE_FROM_OUT" ]; then
               CACHE_FROM_OUT="$(append_line "$CACHE_FROM_OUT" "type=registry,ref=${REG_REF}")"
+              if [ "$SUPPORTS_CACHE_EXPORT" != "true" ] && [ -n "$INLINE_CACHE_TAG" ] && [ "$INLINE_CACHE_TAG" != "$REG_REF" ]; then
+                CACHE_FROM_OUT="$(append_line "$CACHE_FROM_OUT" "type=registry,ref=${INLINE_CACHE_TAG}")"
+              fi
             fi
             if [ -z "$CACHE_TO_OUT" ] && [ "${INPUT_PUSH}" = "true" ]; then
-              CACHE_TO_OUT="$(append_line "$CACHE_TO_OUT" "type=registry,ref=${REG_REF},mode=max")"
+              if [ "$SUPPORTS_CACHE_EXPORT" = "true" ]; then
+                CACHE_TO_OUT="$(append_line "$CACHE_TO_OUT" "type=registry,ref=${REG_REF},mode=max")"
+              else
+                echo "::warning::Builder '${TARGET_BUILDER:-${ACTIVE_BUILDER:-default}}' uses driver '${TARGET_DRIVER:-docker}' without containerd image store (cache export unsupported); downgrading cache-mode=registry --cache-to from '${REG_REF}' to inline cache while retaining --cache-from."
+                ensure_inline_cache_export
+              fi
             fi
             ;;
           gha)
@@ -425,7 +481,12 @@ runs:
               CACHE_FROM_OUT="$(append_line "$CACHE_FROM_OUT" "type=gha${SCOPE_SUFFIX}")"
             fi
             if [ -z "$CACHE_TO_OUT" ]; then
-              CACHE_TO_OUT="$(append_line "$CACHE_TO_OUT" "type=gha,mode=max${SCOPE_SUFFIX}")"
+              if [ "$SUPPORTS_CACHE_EXPORT" = "true" ]; then
+                CACHE_TO_OUT="$(append_line "$CACHE_TO_OUT" "type=gha,mode=max${SCOPE_SUFFIX}")"
+              else
+                echo "::warning::Builder '${TARGET_BUILDER:-${ACTIVE_BUILDER:-default}}' uses driver '${TARGET_DRIVER:-docker}' without containerd image store (cache export unsupported); omitting unsupported cache-mode=gha --cache-to."
+                ensure_inline_cache_export
+              fi
             fi
             ;;
           local)
@@ -434,7 +495,12 @@ runs:
               CACHE_FROM_OUT="$(append_line "$CACHE_FROM_OUT" "type=local,src=${LOCAL_DIR}")"
             fi
             if [ -z "$CACHE_TO_OUT" ]; then
-              CACHE_TO_OUT="$(append_line "$CACHE_TO_OUT" "type=local,dest=${LOCAL_DIR},mode=max")"
+              if [ "$SUPPORTS_CACHE_EXPORT" = "true" ]; then
+                CACHE_TO_OUT="$(append_line "$CACHE_TO_OUT" "type=local,dest=${LOCAL_DIR},mode=max")"
+              else
+                echo "::warning::Builder '${TARGET_BUILDER:-${ACTIVE_BUILDER:-default}}' uses driver '${TARGET_DRIVER:-docker}' without containerd image store (cache export unsupported); omitting unsupported cache-mode=local --cache-to."
+                ensure_inline_cache_export
+              fi
             fi
             ;;
           *)
@@ -443,6 +509,25 @@ runs:
             ;;
         esac
 
+        if [ "$SUPPORTS_CACHE_EXPORT" != "true" ] && [ -n "$CACHE_TO_OUT" ]; then
+          FILTERED_CACHE_TO=""
+          DROPPED_CACHE_TO="false"
+          while IFS= read -r cache_entry; do
+            [ -z "$cache_entry" ] && continue
+            if printf '%s\n' "$cache_entry" | grep -qE '^type=inline([,[:space:]]|$)'; then
+              FILTERED_CACHE_TO="$(append_line "$FILTERED_CACHE_TO" "$cache_entry")"
+            else
+              echo "::warning::Builder '${TARGET_BUILDER:-${ACTIVE_BUILDER:-default}}' uses driver '${TARGET_DRIVER:-docker}' without containerd image store (cache export unsupported); dropping unsupported --cache-to '${cache_entry}'."
+              DROPPED_CACHE_TO="true"
+            fi
+          done <<< "$CACHE_TO_OUT"
+          CACHE_TO_OUT="$FILTERED_CACHE_TO"
+          if [ "$DROPPED_CACHE_TO" = "true" ]; then
+            ensure_inline_cache_export
+          fi
+        fi
+
+        write_output "build-args" "$BUILD_ARGS_OUT"
         write_output "cache-from" "$CACHE_FROM_OUT"
         write_output "cache-to" "$CACHE_TO_OUT"
 
