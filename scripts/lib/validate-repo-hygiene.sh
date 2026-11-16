@@ -39,6 +39,10 @@ validate_containers_and_ignores() {
         echo "::error file=$pw_dockerfile::Dockerfile must configure dpkg force-unsafe-io"
         FAILED=1
       fi
+      if [ -f "setup-playwright/action.yaml" ] && ! grep -q "PW_VERSION=\"${pw_ver}\"" "setup-playwright/action.yaml"; then
+        echo "::error file=setup-playwright/action.yaml::Default PW_VERSION fallback must match PLAYWRIGHT_VERSION (${pw_ver})"
+        FAILED=1
+      fi
       echo "    Verified Playwright SSoT (${pw_ver} @ ${pw_digest})."
     fi
   fi
@@ -100,6 +104,22 @@ validate_containers_and_ignores() {
     fi
     if ! grep -q "ARG PLAYWRIGHT_BASE_IMAGE=${PLAYWRIGHT_BASE_IMAGE}" "$rt_dockerfile"; then
       echo "::error file=$rt_dockerfile::Default ARG PLAYWRIGHT_BASE_IMAGE does not match PLAYWRIGHT_BASE_IMAGE in $rt_versions"
+      FAILED=1
+    fi
+    if ! grep -q "ARG RUNNER_TOOLCHAINS_VERSION=${RUNNER_TOOLCHAINS_VERSION}" "$rt_dockerfile"; then
+      echo "::error file=$rt_dockerfile::Default ARG RUNNER_TOOLCHAINS_VERSION does not match $rt_versions"
+      FAILED=1
+    fi
+    if ! grep -q "ARG UV_VERSION=${UV_VERSION}" "$rt_dockerfile"; then
+      echo "::error file=$rt_dockerfile::Default ARG UV_VERSION does not match UV_VERSION in $rt_versions"
+      FAILED=1
+    fi
+    if [ -n "${pw_ver:-}" ] && [ "${PLAYWRIGHT_VERSION:-}" != "${pw_ver}" ]; then
+      echo "::error file=$rt_versions::PLAYWRIGHT_VERSION (${PLAYWRIGHT_VERSION:-unset}) must match containers/playwright/PLAYWRIGHT_VERSION (${pw_ver})"
+      FAILED=1
+    fi
+    if [ -n "${pw_digest:-}" ] && [ "${PLAYWRIGHT_IMAGE_DIGEST:-}" != "${pw_digest}" ]; then
+      echo "::error file=$rt_versions::PLAYWRIGHT_IMAGE_DIGEST must match containers/playwright/PLAYWRIGHT_DIGEST"
       FAILED=1
     fi
     if ! grep -q "force-unsafe-io" "$rt_dockerfile"; then

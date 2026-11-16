@@ -225,8 +225,8 @@ Unified pre-cached enterprise toolchain container image (`git.gt-web-dev.com/gt-
 
 - **Registry Image Tags**:
   - `git.gt-web-dev.com/gt-dev/runner-toolchains:latest`
-  - `git.gt-web-dev.com/gt-dev/runner-toolchains:v1.0.0`
-  - `git.gt-web-dev.com/gt-dev/runner-toolchains:1.0.0`
+  - `git.gt-web-dev.com/gt-dev/runner-toolchains:v1.1.0`
+  - `git.gt-web-dev.com/gt-dev/runner-toolchains:1.1.0`
 - **SSoT Versioning**: Version and pinned digests are centrally declared in `containers/runner-toolchains/VERSIONS` and published via `.gitea/workflows/publish-runner-toolchains.yaml`.
 
 ```yaml
@@ -249,8 +249,8 @@ jobs:
 Dedicated enterprise Single Source of Truth container image built on Ubuntu 24.04 Noble with Playwright browsers, Node.js LTS, Bun, and `/etc/dpkg/dpkg.cfg.d/force-unsafe-io` pre-baked in `/ms-playwright`. Completely eliminates runtime `apt-get` package downloads, browser installs, and disk sync stalls in CI.
 
 - **Registry Image Tags**:
-  - `git.gt-web-dev.com/gt-dev/playwright-runner:v1.65.0` (Recommended: exact Playwright version pinning)
-  - `git.gt-web-dev.com/gt-dev/playwright-runner:1.65.0`
+  - `git.gt-web-dev.com/gt-dev/playwright-runner:v1.65.1` (Recommended: exact Playwright version pinning)
+  - `git.gt-web-dev.com/gt-dev/playwright-runner:1.65.1`
   - `git.gt-web-dev.com/gt-dev/playwright-runner:latest`
 - **SSoT Versioning**: Version is centrally declared in `containers/playwright/PLAYWRIGHT_VERSION` and enforced during image builds and workflow validation.
 
@@ -259,7 +259,7 @@ jobs:
   frontend-quality:
     runs-on: ubuntu-latest
     container:
-      image: git.gt-web-dev.com/gt-dev/playwright-runner:v1.65.0
+      image: git.gt-web-dev.com/gt-dev/playwright-runner:v1.65.1
     steps:
       - uses: builtin:checkout
       - run: bun test:e2e
@@ -311,6 +311,6 @@ In accordance with enterprise development standards, this repository enforces a 
 
 ## Release & Versioning Policy
 
-- Changes to action definitions are tagged with semantic versions (`v1.0.0`, `v1.11.2`) and major aliases (`v1`).
+- Changes to action definitions are tagged with semantic versions (`v1.0.0`, `v1.14.0`) and major aliases (`v1`).
 - Workflows reference the major release tag `@v1` to receive non-breaking improvements automatically.
 - Both `refs/tags/v1` and `refs/heads/v1` are synchronized upon release to ensure deterministic Gitea runner resolution.

@@ -1,22 +1,22 @@
 # syntax=docker/dockerfile:1
 # Enterprise Pre-Cached CI/CD Toolchain Runner Image (runner-toolchains)
 # Provides:
-# - Ubuntu 24.04 LTS (Noble) + Playwright v1.65.0 browsers (/ms-playwright) & OS deps
+# - Ubuntu 24.04 LTS (Noble) + Playwright v1.65.1 browsers (/ms-playwright) & OS deps
 # - Node.js LTS & npm
 # - Pinned Bun runtime (/opt/bun/bin/bun -> /usr/local/bin/bun)
 # - Pinned Astral uv + pre-installed Python 3.13 (/opt/uv & /opt/uv-python)
 # - Rustup + Cargo + Rustc with pre-baked stable & nightly toolchains (rustfmt, clippy)
 # - Dpkg force-unsafe-io & internal CA trust pre-configured
 
-ARG PLAYWRIGHT_VERSION=1.65.0
-ARG PLAYWRIGHT_IMAGE_DIGEST=sha256:9beb546099e11f52d62e505537914870e01a67e0e6b00ae41da4775324e73dbe
-ARG PLAYWRIGHT_BASE_IMAGE=mcr.microsoft.com/playwright:v1.65.0-noble@sha256:9beb546099e11f52d62e505537914870e01a67e0e6b00ae41da4775324e73dbe
+ARG PLAYWRIGHT_VERSION=1.65.1
+ARG PLAYWRIGHT_IMAGE_DIGEST=sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
+ARG PLAYWRIGHT_BASE_IMAGE=mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
 FROM ${PLAYWRIGHT_BASE_IMAGE}
 
-ARG RUNNER_TOOLCHAINS_VERSION=1.0.0
-ARG PLAYWRIGHT_VERSION=1.65.0
+ARG RUNNER_TOOLCHAINS_VERSION=1.1.0
+ARG PLAYWRIGHT_VERSION=1.65.1
 ARG BUN_VERSION=1.4.4
-ARG UV_VERSION=0.10.9
+ARG UV_VERSION=0.13.8
 ARG PYTHON_VERSION=3.13
 ARG RUST_DEFAULT_TOOLCHAIN=stable
 ARG RUST_NIGHTLY_TOOLCHAIN=nightly

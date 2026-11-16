@@ -61,7 +61,7 @@ jobs:
     name: Playwright E2E Tests
     runs-on: ubuntu-latest
     container:
-      image: git.gt-web-dev.com/gt-dev/playwright-runner:v1.65.0
+      image: git.gt-web-dev.com/gt-dev/playwright-runner:v1.65.1
     steps:
       - name: Checkout Repository
         uses: builtin:checkout

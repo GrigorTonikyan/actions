@@ -10,12 +10,13 @@
 # - Latest Bun runtime (/usr/local/bin/bun)
 # - xvfb and headless shell pre-configured
 
-ARG PLAYWRIGHT_VERSION=1.65.0
-ARG PLAYWRIGHT_IMAGE_DIGEST=sha256:9beb546099e11f52d62e505537914870e01a67e0e6b00ae41da4775324e73dbe
-ARG PLAYWRIGHT_BASE_IMAGE=mcr.microsoft.com/playwright:v1.65.0-noble@sha256:9beb546099e11f52d62e505537914870e01a67e0e6b00ae41da4775324e73dbe
+ARG PLAYWRIGHT_VERSION=1.65.1
+ARG PLAYWRIGHT_IMAGE_DIGEST=sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
+ARG PLAYWRIGHT_BASE_IMAGE=mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
 FROM ${PLAYWRIGHT_BASE_IMAGE}
 
-ARG PLAYWRIGHT_VERSION=1.65.0
+ARG PLAYWRIGHT_VERSION=1.65.1
+ARG BUN_VERSION=1.4.4
 
 # Set environment variables for noninteractive CI execution
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -39,7 +40,7 @@ RUN --mount=type=secret,id=internal_ca,required=false \
       update-ca-certificates; \
     fi && \
     mkdir -p /opt/bun && \
-    curl -fsSL https://bun.sh/install | BUN_INSTALL=/opt/bun bash && \
+    curl -fsSL https://bun.sh/install | BUN_INSTALL=/opt/bun bash -s "bun-v${BUN_VERSION}" && \
     ln -sf /opt/bun/bin/bun /usr/local/bin/bun && \
     chmod 755 /opt/bun/bin/bun && \
     chmod -R 777 /ms-playwright && \
