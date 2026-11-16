@@ -201,4 +201,17 @@ scoop_text="$(cat "${work_dir}/scoop-bucket/bucket/forge-cli.json")"
 assert_contains "$scoop_text" '"forge-cli.exe"' "Case 3 scoop single bin array"
 echo "    [PASS] Case 3: default single binary fallback to app name works cleanly"
 
+# Case 4: Regression guard for #47 (no unindented heredocs in publish-release/action.yaml & valid WinGet version/defaultLocale manifests)
+winget_ver="${work_dir}/winget-pkgs/manifests/o/org/forge-cli/4.10.2/org.forge-cli.yaml"
+winget_loc="${work_dir}/winget-pkgs/manifests/o/org/forge-cli/4.10.2/org.forge-cli.locale.en-US.yaml"
+assert_contains "$(cat "$winget_ver")" "# yaml-language-server: \$schema=https://aka.ms/winget-manifest.version.1.9.0.schema.json" "Case 4 winget version schema header"
+assert_contains "$(cat "$winget_ver")" "ManifestType: version" "Case 4 winget version ManifestType"
+assert_contains "$(cat "$winget_loc")" "# yaml-language-server: \$schema=https://aka.ms/winget-manifest.defaultLocale.1.9.0.schema.json" "Case 4 winget locale schema header"
+assert_contains "$(cat "$winget_loc")" "ManifestType: defaultLocale" "Case 4 winget locale ManifestType"
+if grep -qE "EOF_WG_VER|EOF_WG_LOC|cat[[:space:]].*<<" "$ACTION_FILE"; then
+  echo "[FAIL] Case 4: Forbidden unindented cat << heredoc found in ${ACTION_FILE}"
+  exit 1
+fi
+echo "    [PASS] Case 4: zero unindented heredocs in publish-release/action.yaml and valid WinGet version/locale manifests"
+
 echo "[PASS] All publish-release multi-binary manifest tests passed!"

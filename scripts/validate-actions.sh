@@ -62,6 +62,65 @@ check_no_template_injection_in_run() {
   fi
 }
 
+check_yaml_block_scalar_indentation() {
+  local target_file="$1"
+  local violations
+  violations="$(awk '
+    BEGIN { in_run = 0; run_indent = -1; in_steps = 0 }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      match(line, /^[ ]*/)
+      indent = RLENGTH
+      trimmed = substr(line, indent + 1)
+
+      if (trimmed == "") {
+        next
+      }
+
+      if (indent == 0 && (trimmed ~ /^runs:/ || trimmed ~ /^jobs:/)) {
+        in_steps = 1
+      } else if (indent == 0 && in_steps == 1 && trimmed !~ /^(name|description|author|inputs|outputs|runs|branding|on|env|defaults|concurrency|permissions|jobs):/ && trimmed !~ /^#/) {
+        printf "%d:Unindented line at column 0 after runs/jobs section (%s)\n", NR, line
+      }
+
+      if (in_run == 1) {
+        if (indent > run_indent) {
+          if (trimmed ~ /(^|[[:space:]])cat[[:space:]].*<</ && trimmed !~ /<<-/) {
+            printf "%d:Unindented cat << heredoc inside run block risks breaking YAML block scalar parsing (%s)\n", NR, line
+          }
+          next
+        }
+        # Leaving run block: line at indent <= run_indent must be a valid YAML key or comment at expected indentation
+        if (trimmed ~ /^#/ && indent == 0) {
+          printf "%d:Unindented comment at column 0 inside run block breaks YAML block scalar parsing (%s)\n", NR, line
+          next
+        }
+        if (trimmed !~ /^-[[:space:]]+(name|id|if|uses|run|shell|env|with|working-directory|continue-on-error|timeout-minutes):/ &&
+            trimmed !~ /^(name|id|if|uses|run|shell|env|with|working-directory|continue-on-error|timeout-minutes|runs-on|needs|permissions|concurrency|outputs|strategy|container|services|steps|defaults):/ &&
+            trimmed !~ /^[a-zA-Z0-9_-]+:$/) {
+          printf "%d:Under-indented line breaks YAML run block scalar (%s)\n", NR, line
+        }
+        in_run = 0
+        run_indent = -1
+      }
+
+      if (trimmed ~ /^-[[:space:]]+run:[[:space:]]*[|>]/ || trimmed ~ /^run:[[:space:]]*[|>]/) {
+        in_run = 1
+        run_indent = indent
+        next
+      }
+    }
+  ' "$target_file")"
+
+  if [ -n "$violations" ]; then
+    while IFS= read -r v; do
+      echo "::error file=${target_file}::YAML block scalar indentation violation: ${v}"
+      FAILED=1
+    done <<< "$violations"
+  fi
+}
+
 check_dockerfile_invariants() {
   local dockerfile="$1"
   local dir_name
@@ -269,6 +328,7 @@ for action_file in $ACTION_FILES; do
   fi
 
   check_no_template_injection_in_run "$action_file" "error"
+  check_yaml_block_scalar_indentation "$action_file"
 done
 
 # 2. Validate pinned binary installers & TLS CA action
@@ -434,6 +494,7 @@ WORKFLOW_FILES="$(find .gitea/workflows examples -type f \( -name "*.yaml" -o -n
 for wf in $WORKFLOW_FILES; do
   echo "    Checking $wf..."
   check_no_template_injection_in_run "$wf" "error"
+  check_yaml_block_scalar_indentation "$wf"
 
   if grep -q "NODE_TLS_REJECT_UNAUTHORIZED" "$wf"; then
     echo "::error file=$wf::Forbidden NODE_TLS_REJECT_UNAUTHORIZED detected in $wf"
