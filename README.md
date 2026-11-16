@@ -293,7 +293,7 @@ The `examples/nextjs/` directory provides copy-ready Next.js + Bun SSoT referenc
 
 Every pull request and manual dispatch undergoes automated validation via `.gitea/workflows/validate.yaml`:
 1. **Gitleaks Secret Scan**: Enforces zero credentials or tokens in repository code.
-2. **Action Manifest, Container & Workflow Validation** (`scripts/validate-actions.sh`, `scripts/test-docker-build-push.sh`, and `scripts/test-publish-release.sh`): Verifies required keys, 40-character commit-SHA pinned third-party actions, zero hardcoded internal hostnames in composite manifests, `@sha256:` pinned container digests, `.dockerignore` coverage, zero `CWE-78` template injection in `run:` blocks, zero-warning/pure-ASCII compliance, SSoT version/checksum integrity, non-redundant workflow triggers, and executes the `docker-build-push` and `publish-release` unit test suites.
+2. **Action Manifest, Container & Workflow Validation** (`scripts/validate-actions.sh`, `scripts/test-docker-build-push.sh`, and `scripts/test-publish-release.sh`): Verifies required keys, 40-character commit-SHA pinned third-party actions, zero hardcoded internal hostnames in composite manifests, `@sha256:` pinned container digests, `.dockerignore` coverage, zero `CWE-78` template injection in `run:` blocks, YAML block scalar & heredoc indentation integrity, zero-warning/pure-ASCII compliance, SSoT version/checksum integrity, non-redundant workflow triggers, and executes the `docker-build-push` and `publish-release` unit test suites.
 3. **PR Quality & Merge Gate**: Required status check blocking merges until all checks pass.
 
 ---
