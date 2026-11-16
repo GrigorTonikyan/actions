@@ -73,6 +73,14 @@ inputs:
     description: "Generate and dispatch Scoop JSON manifest to the organization scoop-bucket repository"
     required: false
     default: "false"
+  scoop-autoupdate:
+    description: "Include checkver and autoupdate stanzas in generated Scoop JSON manifest"
+    required: false
+    default: "true"
+  scoop-checkver:
+    description: "Scoop checkver value when scoop-autoupdate is enabled"
+    required: false
+    default: "github"
   dispatch-winget:
     description: "Generate and dispatch WinGet 1.9.0 multi-file manifests to the organization winget-pkgs repository"
     required: false
@@ -98,7 +106,11 @@ inputs:
     required: false
     default: "MIT"
   binary-name:
-    description: "Executable name inside archives (defaults to app name)"
+    description: "Primary executable name (or comma/newline-separated list of executable names) inside archives (defaults to app name)"
+    required: false
+    default: ""
+  extra-binaries:
+    description: "Optional comma- or newline-separated list of companion executable names inside archives (e.g., 'cddm-mcp,cddm-lsp')"
     required: false
     default: ""
   homebrew-tap-repo:
@@ -150,6 +162,9 @@ outputs:
   dispatched-targets:
     description: "Comma-separated list of dispatched package manager targets"
     value: ${{ steps.dispatch.outputs.dispatched-targets }}
+  binaries:
+    description: "Comma-separated list of resolved executable names written to package manifests"
+    value: ${{ steps.dispatch.outputs.binaries }}
 
 runs:
   using: "composite"
@@ -455,6 +470,8 @@ runs:
         INPUT_HOMEBREW_MODE: ${{ inputs.homebrew-mode }}
         INPUT_HOMEBREW_COMPLETIONS: ${{ inputs.homebrew-completions }}
         INPUT_DISPATCH_SCOOP: ${{ inputs.dispatch-scoop }}
+        INPUT_SCOOP_AUTOUPDATE: ${{ inputs.scoop-autoupdate }}
+        INPUT_SCOOP_CHECKVER: ${{ inputs.scoop-checkver }}
         INPUT_DISPATCH_WINGET: ${{ inputs.dispatch-winget }}
         INPUT_VERIFY_URLS: ${{ inputs.verify-urls }}
         INPUT_PUBLISHER: ${{ inputs.publisher }}
@@ -463,6 +480,7 @@ runs:
         INPUT_HOMEPAGE: ${{ inputs.homepage }}
         INPUT_LICENSE: ${{ inputs.license }}
         INPUT_BINARY_NAME: ${{ inputs.binary-name }}
+        INPUT_EXTRA_BINARIES: ${{ inputs.extra-binaries }}
         INPUT_HOMEBREW_TAP_REPO: ${{ inputs.homebrew-tap-repo }}
         INPUT_SCOOP_BUCKET_REPO: ${{ inputs.scoop-bucket-repo }}
         INPUT_WINGET_REPO: ${{ inputs.winget-repo }}
@@ -479,6 +497,29 @@ runs:
       run: |
         set -euo pipefail
 
+        # Resolve primary and companion executable names (supports comma/newline/space separation)
+        RAW_PRIMARY_BINS="${INPUT_BINARY_NAME:-$APP_NAME}"
+        RAW_EXTRA_BINS="${INPUT_EXTRA_BINARIES:-${EXTRA_BINARIES:-}}"
+        BINARIES=()
+        SEEN_BINS=" "
+        while IFS= read -r token || [ -n "$token" ]; do
+          clean_bin="$(printf '%s' "$token" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          clean_bin="${clean_bin%.exe}"
+          clean_bin="${clean_bin%.EXE}"
+          if [ -n "$clean_bin" ] && [[ "$SEEN_BINS" != *" ${clean_bin} "* ]]; then
+            SEEN_BINS="${SEEN_BINS}${clean_bin} "
+            BINARIES+=("$clean_bin")
+          fi
+        done < <(printf '%s\n%s\n' "$RAW_PRIMARY_BINS" "$RAW_EXTRA_BINS" | tr ',;' '\n\n')
+
+        if [ "${#BINARIES[@]}" -eq 0 ]; then
+          BINARIES=("$APP_NAME")
+        fi
+        BIN_NAME="${BINARIES[0]}"
+        EXTRA_BINS=("${BINARIES[@]:1}")
+        JOINED_BINARIES="$(IFS=','; printf '%s' "${BINARIES[*]}")"
+        echo "binaries=${JOINED_BINARIES}" >> "$GITHUB_OUTPUT"
+
         if [ "${INPUT_DISPATCH_HOMEBREW}" != "true" ] && [ "${INPUT_DISPATCH_SCOOP}" != "true" ] && [ "${INPUT_DISPATCH_WINGET}" != "true" ]; then
           echo "--> [DISPATCH] Package manager dispatch disabled; skipping."
           echo "dispatched-targets=" >> "$GITHUB_OUTPUT"
@@ -487,7 +528,6 @@ runs:
 
         PUBLISHER_ID="${INPUT_PUBLISHER:-${PUBLISHER:-$REPO_OWNER}}"
         PUBLISHER_DISPLAY="${INPUT_PUBLISHER_NAME:-${PUBLISHER_NAME:-$PUBLISHER_ID}}"
-        BIN_NAME="${INPUT_BINARY_NAME:-$APP_NAME}"
         HOMEPAGE_URL="${INPUT_HOMEPAGE:-${SERVER_URL}/${REPO_OWNER}/${REPO_NAME}}"
         PKG_DESC="${INPUT_DESCRIPTION:-Enterprise ${APP_NAME} CLI and runtime}"
         PKG_LICENSE="${INPUT_LICENSE:-MIT}"
@@ -651,7 +691,7 @@ runs:
         }
 
         DISPATCHED_LIST=()
-        WORK_ROOT="$(mktemp -d "${RUNNER_TEMP:-/tmp}/pkg-dispatch.XXXXXX")"
+        WORK_ROOT="${PKG_DISPATCH_WORK_ROOT:-$(mktemp -d "${RUNNER_TEMP:-/tmp}/pkg-dispatch.XXXXXX")}"
 
         # 1. Homebrew Tap Dispatch (Formula/<app>.rb and/or Casks/<app>.rb)
         if [ "${INPUT_DISPATCH_HOMEBREW}" = "true" ]; then
@@ -712,6 +752,9 @@ runs:
               fi
               printf '  def install\n'
               printf '    bin.install "%s"\n' "$BIN_NAME"
+              for extra_bin in "${EXTRA_BINS[@]}"; do
+                printf '    bin.install "%s" if File.exist?("%s")\n' "$extra_bin" "$extra_bin"
+              done
               if [ "${INPUT_HOMEBREW_COMPLETIONS}" = "true" ]; then
                 printf '    generate_completions_from_executable(bin/"%s", "completions")\n' "$BIN_NAME"
               fi
@@ -752,7 +795,9 @@ runs:
                 printf '  name "%s"\n' "$APP_NAME"
                 printf '  desc "%s"\n' "$PKG_DESC"
                 printf '  homepage "%s"\n' "$HOMEPAGE_URL"
-                printf '  binary "%s"\n' "$BIN_NAME"
+                for cask_bin in "${BINARIES[@]}"; do
+                  printf '  binary "%s"\n' "$cask_bin"
+                done
                 printf 'end\n'
               } > "$CASK_FILE"
               echo "--> [HOMEBREW] Generated ${CASK_FILE}"
@@ -782,27 +827,91 @@ runs:
           mkdir -p "${SCOOP_DIR}/bucket"
           SCOOP_FILE="${SCOOP_DIR}/bucket/${APP_NAME}.json"
 
-          jq -n \
-            --arg version "$SEMVER" \
-            --arg desc "$PKG_DESC" \
-            --arg homepage "$HOMEPAGE_URL" \
-            --arg license "$PKG_LICENSE" \
-            --arg bin "${BIN_NAME}.exe" \
-            --arg x64_url "${WIN_X64_FILE:+${DOWNLOAD_BASE}/${WIN_X64_FILE}}" \
-            --arg x64_hash "$WIN_X64_SHA" \
-            --arg arm64_url "${WIN_ARM64_FILE:+${DOWNLOAD_BASE}/${WIN_ARM64_FILE}}" \
-            --arg arm64_hash "$WIN_ARM64_SHA" \
-            '{
-              version: $version,
-              description: $desc,
-              homepage: $homepage,
-              license: $license,
-              bin: $bin,
-              architecture: (
-                ({} | if $x64_url != "" then . + {"64bit": {url: $x64_url, hash: $x64_hash}} else . end)
-                | (if $arm64_url != "" then . + {"arm64": {url: $arm64_url, hash: $arm64_hash}} else . end)
-              )
-            }' > "$SCOOP_FILE"
+          SCOOP_AUTOUPDATE_ENABLED="${INPUT_SCOOP_AUTOUPDATE:-true}"
+          SCOOP_CHECKVER_VAL="${INPUT_SCOOP_CHECKVER:-github}"
+
+          X64_URL="${WIN_X64_FILE:+${DOWNLOAD_BASE}/${WIN_X64_FILE}}"
+          ARM64_URL="${WIN_ARM64_FILE:+${DOWNLOAD_BASE}/${WIN_ARM64_FILE}}"
+          X64_AUTO_URL="${X64_URL//v${SEMVER}/v\$version}"
+          if [ "$X64_AUTO_URL" = "$X64_URL" ]; then
+            X64_AUTO_URL="${X64_URL//${SEMVER}/\$version}"
+          fi
+          ARM64_AUTO_URL="${ARM64_URL//v${SEMVER}/v\$version}"
+          if [ "$ARM64_AUTO_URL" = "$ARM64_URL" ]; then
+            ARM64_AUTO_URL="${ARM64_URL//${SEMVER}/\$version}"
+          fi
+
+          json_escape() {
+            local s="$1"
+            s="${s//\\/\\\\}"
+            s="${s//\"/\\\"}"
+            printf '%s' "$s"
+          }
+
+          {
+            printf '{\n'
+            printf '  "version": "%s",\n' "$(json_escape "$SEMVER")"
+            printf '  "description": "%s",\n' "$(json_escape "$PKG_DESC")"
+            printf '  "homepage": "%s",\n' "$(json_escape "$HOMEPAGE_URL")"
+            printf '  "license": "%s",\n' "$(json_escape "$PKG_LICENSE")"
+            printf '  "architecture": {\n'
+            if [ -n "$X64_URL" ]; then
+              printf '    "64bit": {\n'
+              printf '      "url": "%s",\n' "$(json_escape "$X64_URL")"
+              printf '      "hash": "%s"\n' "$(json_escape "$WIN_X64_SHA")"
+              if [ -n "$ARM64_URL" ]; then
+                printf '    },\n'
+              else
+                printf '    }\n'
+              fi
+            fi
+            if [ -n "$ARM64_URL" ]; then
+              printf '    "arm64": {\n'
+              printf '      "url": "%s",\n' "$(json_escape "$ARM64_URL")"
+              printf '      "hash": "%s"\n' "$(json_escape "$WIN_ARM64_SHA")"
+              printf '    }\n'
+            fi
+            printf '  },\n'
+            printf '  "bin": [\n'
+            for ((i = 0; i < ${#BINARIES[@]}; i++)); do
+              if [ $((i + 1)) -lt ${#BINARIES[@]} ]; then
+                printf '    "%s.exe",\n' "$(json_escape "${BINARIES[$i]}")"
+              else
+                printf '    "%s.exe"\n' "$(json_escape "${BINARIES[$i]}")"
+              fi
+            done
+            if [ "$SCOOP_AUTOUPDATE_ENABLED" = "true" ]; then
+              printf '  ],\n'
+              printf '  "checkver": "%s",\n' "$(json_escape "$SCOOP_CHECKVER_VAL")"
+              printf '  "autoupdate": {\n'
+              printf '    "architecture": {\n'
+              if [ -n "$X64_AUTO_URL" ]; then
+                printf '      "64bit": {\n'
+                printf '        "url": "%s",\n' "$(json_escape "$X64_AUTO_URL")"
+                printf '        "hash": {\n'
+                printf '          "url": "$baseurl/SHA256SUMS.txt"\n'
+                printf '        }\n'
+                if [ -n "$ARM64_AUTO_URL" ]; then
+                  printf '      },\n'
+                else
+                  printf '      }\n'
+                fi
+              fi
+              if [ -n "$ARM64_AUTO_URL" ]; then
+                printf '      "arm64": {\n'
+                printf '        "url": "%s",\n' "$(json_escape "$ARM64_AUTO_URL")"
+                printf '        "hash": {\n'
+                printf '          "url": "$baseurl/SHA256SUMS.txt"\n'
+                printf '        }\n'
+                printf '      }\n'
+              fi
+              printf '    }\n'
+              printf '  }\n'
+            else
+              printf '  ]\n'
+            fi
+            printf '}\n'
+          } > "$SCOOP_FILE"
 
           echo "--> [SCOOP] Generated ${SCOOP_FILE}"
           git -C "$SCOOP_DIR" config user.name "${GITHUB_ACTOR:-release-bot}"
@@ -832,30 +941,30 @@ runs:
           mkdir -p "$MANIFEST_DIR"
 
           # Version manifest
-          cat > "${MANIFEST_DIR}/${PKG_ID}.yaml" <<EOF_WG_VER
-# yaml-language-server: \$schema=https://aka.ms/winget-manifest.version.1.9.0.schema.json
-PackageIdentifier: ${PKG_ID}
-PackageVersion: ${SEMVER}
-DefaultLocale: en-US
-ManifestType: version
-ManifestVersion: 1.9.0
-EOF_WG_VER
+          {
+            printf '# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.9.0.schema.json\n'
+            printf 'PackageIdentifier: %s\n' "$PKG_ID"
+            printf 'PackageVersion: %s\n' "$SEMVER"
+            printf 'DefaultLocale: en-US\n'
+            printf 'ManifestType: version\n'
+            printf 'ManifestVersion: 1.9.0\n'
+          } > "${MANIFEST_DIR}/${PKG_ID}.yaml"
 
           # DefaultLocale manifest
-          cat > "${MANIFEST_DIR}/${PKG_ID}.locale.en-US.yaml" <<EOF_WG_LOC
-# yaml-language-server: \$schema=https://aka.ms/winget-manifest.defaultLocale.1.9.0.schema.json
-PackageIdentifier: ${PKG_ID}
-PackageVersion: ${SEMVER}
-PackageLocale: en-US
-Publisher: ${PUBLISHER_DISPLAY}
-PackageName: ${APP_NAME}
-PackageUrl: ${HOMEPAGE_URL}
-License: ${PKG_LICENSE}
-ShortDescription: ${PKG_DESC}
-Moniker: ${APP_NAME}
-ManifestType: defaultLocale
-ManifestVersion: 1.9.0
-EOF_WG_LOC
+          {
+            printf '# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.9.0.schema.json\n'
+            printf 'PackageIdentifier: %s\n' "$PKG_ID"
+            printf 'PackageVersion: %s\n' "$SEMVER"
+            printf 'PackageLocale: en-US\n'
+            printf 'Publisher: %s\n' "$PUBLISHER_DISPLAY"
+            printf 'PackageName: %s\n' "$APP_NAME"
+            printf 'PackageUrl: %s\n' "$HOMEPAGE_URL"
+            printf 'License: %s\n' "$PKG_LICENSE"
+            printf 'ShortDescription: %s\n' "$PKG_DESC"
+            printf 'Moniker: %s\n' "$APP_NAME"
+            printf 'ManifestType: defaultLocale\n'
+            printf 'ManifestVersion: 1.9.0\n'
+          } > "${MANIFEST_DIR}/${PKG_ID}.locale.en-US.yaml"
 
           # Installer manifest (strictly for architectures present in SHA256SUMS.txt)
           {
@@ -865,8 +974,10 @@ EOF_WG_LOC
             printf 'InstallerType: zip\n'
             printf 'NestedInstallerType: portable\n'
             printf 'NestedInstallerFiles:\n'
-            printf '  - RelativeFilePath: %s.exe\n' "$BIN_NAME"
-            printf '    PortableCommandAlias: %s\n' "$BIN_NAME"
+            for wg_bin in "${BINARIES[@]}"; do
+              printf '  - RelativeFilePath: %s.exe\n' "$wg_bin"
+              printf '    PortableCommandAlias: %s\n' "$wg_bin"
+            done
             printf 'Installers:\n'
             if [ -n "$WIN_X64_FILE" ]; then
               printf '  - Architecture: x64\n'
@@ -893,7 +1004,9 @@ EOF_WG_LOC
           DISPATCHED_LIST+=("winget")
         fi
 
-        rm -rf "$WORK_ROOT"
+        if [ -z "${PKG_DISPATCH_WORK_ROOT:-}" ]; then
+          rm -rf "$WORK_ROOT"
+        fi
         JOINED_TARGETS="$(IFS=','; printf '%s' "${DISPATCHED_LIST[*]}")"
         echo "dispatched-targets=${JOINED_TARGETS}" >> "$GITHUB_OUTPUT"
         echo "--> [PASS] Completed package manager dispatch (${JOINED_TARGETS})."
