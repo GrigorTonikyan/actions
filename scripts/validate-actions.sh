@@ -262,6 +262,10 @@ for action_file in $ACTION_FILES; do
       echo "::error file=$action_file::publish-release must expose dispatch-homebrew, dispatch-scoop, and dispatch-winget inputs"
       FAILED=1
     fi
+    if ! grep -q "extra-binaries" "$action_file" || ! grep -q "scoop-autoupdate" "$action_file"; then
+      echo "::error file=$action_file::publish-release must expose extra-binaries and scoop-autoupdate inputs"
+      FAILED=1
+    fi
   fi
 
   check_no_template_injection_in_run "$action_file" "error"
@@ -506,10 +510,14 @@ else
   echo "    Zero raw JavaScript files detected."
 fi
 
-# 7. Execute unit tests for docker-build-push prep logic
-echo "--> [7/7] Running docker-build-push unit test suite..."
+# 7. Execute unit tests for docker-build-push prep logic & publish-release manifest rendering
+echo "--> [7/7] Running docker-build-push and publish-release unit test suites..."
 if ! bash ./scripts/test-docker-build-push.sh; then
   echo "::error::docker-build-push unit tests failed"
+  FAILED=1
+fi
+if ! bash ./scripts/test-publish-release.sh; then
+  echo "::error::publish-release unit tests failed"
   FAILED=1
 fi
 

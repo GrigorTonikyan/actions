@@ -184,16 +184,21 @@ Reusable internal loopback TLS trust action that inspects `${GITHUB_SERVER_URL}`
 ---
 
 ### 10. `publish-release`
-Security-hardened composite action for binary-whitelisted Gitea release publishing, `SHA256SUMS.txt` cryptographic attestation verification (blocking `0{64}` placeholder hashes and non-binary scripts/manifests), HTTP 200 asset reachability checks, and automated multi-app package manager dispatch to `homebrew-tap` (`Formula/<app>.rb` and `Casks/<app>.rb`), `scoop-bucket` (`bucket/<app>.json`), and `winget-pkgs` (WinGet schema `1.9.0` multi-file manifests) using per-repo SSH deploy keys or in-memory HTTP header authentication.
+Security-hardened composite action for binary-whitelisted Gitea release publishing, `SHA256SUMS.txt` cryptographic attestation verification (blocking `0{64}` placeholder hashes and non-binary scripts/manifests), HTTP 200 asset reachability checks, and automated multi-app/multi-binary package manager dispatch to `homebrew-tap` (`Formula/<app>.rb` and `Casks/<app>.rb`), `scoop-bucket` (`bucket/<app>.json` with `bin` JSON arrays and `checkver`/`autoupdate` stanzas), and `winget-pkgs` (WinGet schema `1.9.0` multi-file manifests with `NestedInstallerFiles` entries for every shipped executable) using per-repo SSH deploy keys or in-memory HTTP header authentication.
 
 ```yaml
 - name: Publish Release & Dispatch Package Manifests
   uses: self:gt-dev/actions/publish-release@v1
   with:
     tag: ${{ github.ref_name }}
+    app: cddm
+    binary-name: cddm
+    extra-binaries: "cddm-mcp,cddm-lsp"
     artifacts-dir: dist-release
+    homebrew-completions: "true"
     dispatch-homebrew: "true"
     dispatch-scoop: "true"
+    scoop-autoupdate: "true"
     dispatch-winget: "true"
   env:
     GITEA_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
@@ -208,6 +213,7 @@ Security-hardened composite action for binary-whitelisted Gitea release publishi
 - `checksums-path`: Resolved path to verified `SHA256SUMS.txt`.
 - `uploaded-assets`: Newline-separated list of uploaded binary asset filenames.
 - `dispatched-targets`: Comma-separated list of dispatched package manager targets (`homebrew`, `scoop`, `winget`).
+- `binaries`: Comma-separated list of resolved executable names written to package manifests.
 
 ---
 
@@ -287,7 +293,7 @@ The `examples/nextjs/` directory provides copy-ready Next.js + Bun SSoT referenc
 
 Every pull request and manual dispatch undergoes automated validation via `.gitea/workflows/validate.yaml`:
 1. **Gitleaks Secret Scan**: Enforces zero credentials or tokens in repository code.
-2. **Action Manifest, Container & Workflow Validation** (`scripts/validate-actions.sh` & `scripts/test-docker-build-push.sh`): Verifies required keys, 40-character commit-SHA pinned third-party actions, zero hardcoded internal hostnames in composite manifests, `@sha256:` pinned container digests, `.dockerignore` coverage, zero `CWE-78` template injection in `run:` blocks, zero-warning/pure-ASCII compliance, SSoT version/checksum integrity, non-redundant workflow triggers, and executes the 9-case `docker-build-push` unit test suite.
+2. **Action Manifest, Container & Workflow Validation** (`scripts/validate-actions.sh`, `scripts/test-docker-build-push.sh`, and `scripts/test-publish-release.sh`): Verifies required keys, 40-character commit-SHA pinned third-party actions, zero hardcoded internal hostnames in composite manifests, `@sha256:` pinned container digests, `.dockerignore` coverage, zero `CWE-78` template injection in `run:` blocks, zero-warning/pure-ASCII compliance, SSoT version/checksum integrity, non-redundant workflow triggers, and executes the `docker-build-push` and `publish-release` unit test suites.
 3. **PR Quality & Merge Gate**: Required status check blocking merges until all checks pass.
 
 ---
