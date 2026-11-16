@@ -70,19 +70,20 @@ Cryptographically pinned Gitleaks secret scanner.
 ```
 
 ### 3. `setup-cddm`
-Cryptographically pinned binary installer and verifier for CDDM (Code Duplication Detection & Metrics) CLI with elevation support, internal CA trust, and automatic release checksum verification.
+Latest-by-default (or pinned) binary installer and cryptographic verifier for CDDM (Code Duplication Detection & Metrics) CLI with elevation support, internal CA trust, and automatic `SHA256SUMS.txt` verification.
 
 ```yaml
 - name: Setup CDDM
   uses: self:gt-dev/actions/setup-cddm@v1
   with:
-    version: "v4.10.2"
+    version: "latest" # default: resolves latest release dynamically; or pin e.g. "v4.11.0"
     destination: "/usr/local/bin"
 ```
 
-- **Universal Version Normalization**: Accepts both `v4.10.2` and `4.10.2` formats seamlessly.
-- **Zero-Hardcoded Endpoint & SHA-256 Verification**: Derives the download base URL dynamically from `${GITHUB_SERVER_URL}` and verifies the pinned SSoT SHA-256 digest by default, or fetches `SHA256SUMS.txt` automatically when overriding `version`.
-- **Smart Idempotency Check**: Skips downloading if the requested version is already present in `PATH`.
+- **Always-Latest Default & Pinning Support**: Defaults to `"latest"` by querying `${GITHUB_SERVER_URL}/api/v1/repos/<owner>/cddm/releases/latest` (refusing silent version downgrades on API failures), while still accepting explicit semver tags (`v4.11.0` or `4.11.0`).
+- **Zero-Hardcoded Endpoint & Cryptographic SHA-256 Verification**: Derives the download base URL dynamically from `${GITHUB_SERVER_URL}`, validates against the pinned SSoT digest (`v4.11.0`) or release `SHA256SUMS.txt` automatically, and blocks all-zero placeholder checksums.
+- **Smart Upgrade & Idempotency Check**: Fast-paths when the target version is already active in `PATH`, and automatically upgrades if an older CDDM binary is pre-installed.
+- **Outputs**: Exposes `version`, `tag`, and `cached`.
 
 ### 4. `setup-playwright`
 Playwright browser binaries and operating system dependency installer with automated caching and container detection.
@@ -99,7 +100,7 @@ Playwright browser binaries and operating system dependency installer with autom
 
 - **Container Detection with Revision Probe**: Automatically discovers pre-baked browser revisions in `/ms-playwright` and skips downloads entirely. If a container lacks the required browser revision, it issues a notice and performs a targeted download.
 - **Complete Runtime OS Dependency Probe**: Probes all 16 Linux OS shared libraries required by headless Chromium via bulk `dpkg -s`. Skips `apt-get` entirely when pre-installed.
-- **Automated Dpkg I/O Acceleration (`force-unsafe-io`)**: Automatically configures `/etc/dpkg/dpkg.cfg.d/force-unsafe-io` before provisioning, eliminating `fsync()` synchronous flush stalls across copy-on-write filesystems (ZFS / overlayfs) and delivering 5x–10x faster package extraction.
+- **Automated Dpkg I/O Acceleration (`force-unsafe-io`)**: Automatically configures `/etc/dpkg/dpkg.cfg.d/force-unsafe-io` before provisioning, eliminating `fsync()` synchronous flush stalls across copy-on-write filesystems (ZFS / overlayfs) and delivering 5x-10x faster package extraction.
 - **Intelligent Package.json Version Discovery**: Probes `@playwright/test` from `package.json` before cache key generation to prevent fallback invalidations.
 - **Root & Non-Root Runner Compatibility**: Dynamically resolves privilege escalation (`$SUDO`) to function seamlessly in both root containers and standard non-root runner environments.
 - **Version-Keyed Caching**: Caches binaries keyed by resolved `@playwright/test` version rather than entire lockfiles, eliminating invalidation churn from unrelated dependencies.
@@ -285,7 +286,8 @@ The `examples/nextjs/` directory provides copy-ready Next.js + Bun SSoT referenc
 - [`examples/nextjs/Dockerfile`](examples/nextjs/Dockerfile): Single unified `bun-node-alpine` builder (`--mount=type=cache`, `NEXT_TELEMETRY_DISABLED=1`, `output: "standalone"`) paired with `node-alpine-runner`.
 - [`examples/nextjs/.dockerignore`](examples/nextjs/.dockerignore): Baseline exclusions preventing `.git`, `.next`, `node_modules`, and `.env*` bloat in Docker build contexts.
 - [`examples/nextjs/next.config.ts`](examples/nextjs/next.config.ts): Production configuration (`output: "standalone"`, `poweredByHeader: false`, `reactStrictMode: true`, and `experimental.turbopackFileSystemCacheForBuild: true`).
-- [`examples/nextjs/.gitea/workflows/ci.yaml`](examples/nextjs/.gitea/workflows/ci.yaml) & [`deploy.yaml`](examples/nextjs/.gitea/workflows/deploy.yaml): Example `pull_request` validation (with `.next/cache` caching) and `main` DinD `docker-build-push@v1` build/push workflows (`cache-mode: registry` with automatic native DinD inline fallback).
+- [`examples/nextjs/.cddmrules.toml`](examples/nextjs/.cddmrules.toml): Canonical CDDM architectural rules enforcing `<= 500` line (~2500 token) modularity, zero-emoji hygiene, banned legacy tooling, TLS bypass prevention, and layer isolation.
+- [`examples/nextjs/.gitea/workflows/ci.yaml`](examples/nextjs/.gitea/workflows/ci.yaml) & [`deploy.yaml`](examples/nextjs/.gitea/workflows/deploy.yaml): Example `pull_request` validation (with `.next/cache` caching, `setup-cddm@v1` latest resolution, `cddm rules check --enforce-policies`, and `cddm scan --no-ignore-tests --no-ignore-mocks --detect-type4 true --enforce-policies`) and `main` DinD `docker-build-push@v1` build/push workflows (`cache-mode: registry` with automatic native DinD inline fallback).
 
 ---
 
@@ -293,8 +295,9 @@ The `examples/nextjs/` directory provides copy-ready Next.js + Bun SSoT referenc
 
 Every pull request and manual dispatch undergoes automated validation via `.gitea/workflows/validate.yaml`:
 1. **Gitleaks Secret Scan**: Enforces zero credentials or tokens in repository code.
-2. **Action Manifest, Container & Workflow Validation** (`scripts/validate-actions.sh`, `scripts/test-docker-build-push.sh`, and `scripts/test-publish-release.sh`): Verifies required keys, 40-character commit-SHA pinned third-party actions, zero hardcoded internal hostnames in composite manifests, `@sha256:` pinned container digests, `.dockerignore` coverage, zero `CWE-78` template injection in `run:` blocks, YAML block scalar & heredoc indentation integrity, zero-warning/pure-ASCII compliance, SSoT version/checksum integrity, non-redundant workflow triggers, and executes the `docker-build-push` and `publish-release` unit test suites.
-3. **PR Quality & Merge Gate**: Required status check blocking merges until all checks pass.
+2. **Action Manifest, Container & Workflow Validation** (`scripts/validate-actions.sh` + modular `scripts/lib/*.sh`, `scripts/test-setup-cddm.sh`, `scripts/test-docker-build-push.sh`, and `scripts/test-publish-release.sh`): Verifies required keys, 40-character commit-SHA pinned third-party actions, zero hardcoded internal hostnames in composite manifests, `setup-cddm` always-latest default & `SHA256SUMS.txt` verification, `@sha256:` pinned container digests, `.dockerignore` coverage, zero `CWE-78` template injection in `run:` blocks, YAML block scalar & heredoc indentation integrity, zero-warning/pure-ASCII compliance, `<= 500` line modularity ceilings across scripts/workflows, non-redundant workflow triggers, and executes all unit test suites.
+3. **CDDM Policy & Duplication Gate** (`self:gt-dev/actions/setup-cddm@v1` / `./setup-cddm` + `.cddmrules.toml`): Dynamically installs the latest `gt-dev/cddm` release and runs `cddm rules check --rules .cddmrules.toml --enforce-policies` and `cddm scan --no-ignore-tests --no-ignore-mocks --detect-type4 true --enforce-policies`.
+4. **PR Quality & Merge Gate**: Required status check blocking merges until all checks pass.
 
 ---
 

@@ -29,6 +29,17 @@ jobs:
         shell: bash
         run: bash ./scripts/validate-actions.sh
 
+      - name: Setup Latest CDDM Binary
+        uses: ./setup-cddm
+
+      - name: Verify CDDM Architectural Rules
+        shell: bash
+        run: cddm rules check --rules .cddmrules.toml --enforce-policies
+
+      - name: Run CDDM Duplication & Policy Scan
+        shell: bash
+        run: cddm scan . --no-ignore-tests --no-ignore-mocks --detect-type4 true --enforce-policies --fail-threshold 10.0
+
   ci-gate:
     name: PR Quality & Merge Gate
     runs-on: ubuntu-latest
