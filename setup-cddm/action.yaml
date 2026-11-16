@@ -4,7 +4,7 @@ inputs:
   version:
     description: "CDDM version to install"
     required: false
-    default: "v4.9.2"
+    default: "v4.10.2"
   sha256:
     description: "Optional expected SHA256 checksum override (defaults to pinned SSoT digest or release SHA256SUMS.txt lookup)"
     required: false
@@ -38,8 +38,8 @@ runs:
         INPUT_DESTINATION: ${{ inputs.destination }}
       run: |
         set -euo pipefail
-        PINNED_VERSION="v4.9.2"
-        PINNED_SHA256="ab4c391822e2eeb824e580d08e1d2d9e4ea8699861e1cf95c5ce910e316ab9f6"
+        PINNED_VERSION="v4.10.2"
+        PINNED_SHA256="9fd56753d173b1348b9c2b86d0e75eedb678e9f185521b2bcf504f5f05f5d633"
 
         SUDO=""
         if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then

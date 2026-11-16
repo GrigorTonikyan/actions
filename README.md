@@ -76,11 +76,11 @@ Cryptographically pinned binary installer and verifier for CDDM (Code Duplicatio
 - name: Setup CDDM
   uses: self:gt-dev/actions/setup-cddm@v1
   with:
-    version: "v4.9.2"
+    version: "v4.10.2"
     destination: "/usr/local/bin"
 ```
 
-- **Universal Version Normalization**: Accepts both `v4.9.2` and `4.9.2` formats seamlessly.
+- **Universal Version Normalization**: Accepts both `v4.10.2` and `4.10.2` formats seamlessly.
 - **Zero-Hardcoded Endpoint & SHA-256 Verification**: Derives the download base URL dynamically from `${GITHUB_SERVER_URL}` and verifies the pinned SSoT SHA-256 digest by default, or fetches `SHA256SUMS.txt` automatically when overriding `version`.
 - **Smart Idempotency Check**: Skips downloading if the requested version is already present in `PATH`.
 
@@ -278,8 +278,8 @@ Unified pre-baked Alpine Linux builder (`bun-node-alpine`) and minimal productio
 The `examples/nextjs/` directory provides copy-ready Next.js + Bun SSoT reference configurations:
 - [`examples/nextjs/Dockerfile`](examples/nextjs/Dockerfile): Single unified `bun-node-alpine` builder (`--mount=type=cache`, `NEXT_TELEMETRY_DISABLED=1`, `output: "standalone"`) paired with `node-alpine-runner`.
 - [`examples/nextjs/.dockerignore`](examples/nextjs/.dockerignore): Baseline exclusions preventing `.git`, `.next`, `node_modules`, and `.env*` bloat in Docker build contexts.
-- [`examples/nextjs/next.config.ts`](examples/nextjs/next.config.ts): Minimal `output: "standalone"` configuration.
-- [`examples/nextjs/.gitea/workflows/ci.yaml`](examples/nextjs/.gitea/workflows/ci.yaml) & [`deploy.yaml`](examples/nextjs/.gitea/workflows/deploy.yaml): Example `pull_request` validation (with `.next/cache` caching) and `main` DinD `docker-build-push@v1` build/push workflows.
+- [`examples/nextjs/next.config.ts`](examples/nextjs/next.config.ts): Production configuration (`output: "standalone"`, `poweredByHeader: false`, `reactStrictMode: true`, and `experimental.turbopackFileSystemCacheForBuild: true`).
+- [`examples/nextjs/.gitea/workflows/ci.yaml`](examples/nextjs/.gitea/workflows/ci.yaml) & [`deploy.yaml`](examples/nextjs/.gitea/workflows/deploy.yaml): Example `pull_request` validation (with `.next/cache` caching) and `main` DinD `docker-build-push@v1` build/push workflows (`cache-mode: registry` with automatic native DinD inline fallback).
 
 ---
 
@@ -287,7 +287,7 @@ The `examples/nextjs/` directory provides copy-ready Next.js + Bun SSoT referenc
 
 Every pull request and manual dispatch undergoes automated validation via `.gitea/workflows/validate.yaml`:
 1. **Gitleaks Secret Scan**: Enforces zero credentials or tokens in repository code.
-2. **Action Manifest, Container & Workflow Validation** (`scripts/validate-actions.sh`): Verifies required keys, 40-character commit-SHA pinned third-party actions, zero hardcoded internal hostnames in composite manifests, `@sha256:` pinned container digests, `.dockerignore` coverage, zero `CWE-78` template injection in `run:` blocks, zero-warning/pure-ASCII compliance, SSoT version/checksum integrity, and non-redundant workflow triggers.
+2. **Action Manifest, Container & Workflow Validation** (`scripts/validate-actions.sh` & `scripts/test-docker-build-push.sh`): Verifies required keys, 40-character commit-SHA pinned third-party actions, zero hardcoded internal hostnames in composite manifests, `@sha256:` pinned container digests, `.dockerignore` coverage, zero `CWE-78` template injection in `run:` blocks, zero-warning/pure-ASCII compliance, SSoT version/checksum integrity, non-redundant workflow triggers, and executes the 9-case `docker-build-push` unit test suite.
 3. **PR Quality & Merge Gate**: Required status check blocking merges until all checks pass.
 
 ---
@@ -302,6 +302,6 @@ In accordance with enterprise development standards, this repository enforces a 
 
 ## Release & Versioning Policy
 
-- Changes to action definitions are tagged with semantic versions (`v1.0.0`, `v1.10.0`) and major aliases (`v1`).
+- Changes to action definitions are tagged with semantic versions (`v1.0.0`, `v1.11.2`) and major aliases (`v1`).
 - Workflows reference the major release tag `@v1` to receive non-breaking improvements automatically.
 - Both `refs/tags/v1` and `refs/heads/v1` are synchronized upon release to ensure deterministic Gitea runner resolution.

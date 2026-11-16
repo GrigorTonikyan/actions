@@ -8,7 +8,7 @@ Canonical reference configuration eliminating ZFS + `overlay2` (`metacopy: false
 - [`.dockerignore`](./.dockerignore): Excludes VCS, CI, docs, tests, scripts, local caches, and `.env*` secrets from the Docker build context.
 - [`next.config.ts`](./next.config.ts): Configures `output: "standalone"` and `experimental.turbopackFileSystemCacheForBuild: true`.
 - [`.gitea/workflows/ci.yaml`](./.gitea/workflows/ci.yaml): PR validation workflow using `pull_request` + `workflow_dispatch`, shallow `fetch-depth: 1`, `self:gt-dev/actions/setup-toolchains@v1` (with `nextjs-cache: "true"`), `playwright-runner:v1.65.0`, and `self:gt-dev/actions/docker-build-push@v1`.
-- [`.gitea/workflows/deploy.yaml`](./.gitea/workflows/deploy.yaml): Main branch CD workflow pushing immutable version/SHA tags via `self:gt-dev/actions/docker-build-push@v1`.
+- [`.gitea/workflows/deploy.yaml`](./.gitea/workflows/deploy.yaml): Main branch CD workflow pushing immutable version/SHA tags with `cache-mode: registry` (and automatic native DinD inline cache fallback) via `self:gt-dev/actions/docker-build-push@v1`.
 
 ## Using Pre-Baked `bun-node-alpine` & `node-alpine-runner` Images
 
