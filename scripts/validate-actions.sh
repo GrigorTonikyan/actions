@@ -277,9 +277,14 @@ fi
 CDDM_ACTION="setup-cddm/action.yaml"
 if [ -f "$CDDM_ACTION" ]; then
   DEFAULT_CDDM_VER="$(grep -A 5 "^  version:" "$CDDM_ACTION" | grep "default:" | head -n1 | awk -F'"' '{print $2}')"
+  PINNED_CDDM_VER="$(grep 'PINNED_VERSION="' "$CDDM_ACTION" | head -n1 | awk -F'"' '{print $2}')"
   PINNED_CDDM_SHA="$(grep 'PINNED_SHA256="' "$CDDM_ACTION" | head -n1 | awk -F'"' '{print $2}')"
   if [ -z "$DEFAULT_CDDM_VER" ] || ! printf '%s\n' "$DEFAULT_CDDM_VER" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+$'; then
     echo "::error file=$CDDM_ACTION::setup-cddm default version must be a valid semver tag (found '${DEFAULT_CDDM_VER:-unset}')"
+    FAILED=1
+  fi
+  if [ "$DEFAULT_CDDM_VER" != "$PINNED_CDDM_VER" ]; then
+    echo "::error file=$CDDM_ACTION::setup-cddm inputs.version.default ('${DEFAULT_CDDM_VER:-unset}') does not match PINNED_VERSION ('${PINNED_CDDM_VER:-unset}')"
     FAILED=1
   fi
   if [ -z "$PINNED_CDDM_SHA" ] || ! printf '%s\n' "$PINNED_CDDM_SHA" | grep -qE '^[0-9a-f]{64}$'; then
@@ -292,12 +297,18 @@ fi
 
 GITLEAKS_ACTION="gitleaks-scan/action.yaml"
 if [ -f "$GITLEAKS_ACTION" ]; then
+  DEFAULT_GL_VER="$(grep -A 5 "^  version:" "$GITLEAKS_ACTION" | grep "default:" | head -n1 | awk -F'"' '{print $2}')"
+  PINNED_GL_VER="$(grep 'PINNED_VERSION="' "$GITLEAKS_ACTION" | head -n1 | awk -F'"' '{print $2}')"
   PINNED_GL_SHA="$(grep 'PINNED_SHA256="' "$GITLEAKS_ACTION" | head -n1 | awk -F'"' '{print $2}')"
+  if [ "$DEFAULT_GL_VER" != "$PINNED_GL_VER" ]; then
+    echo "::error file=$GITLEAKS_ACTION::gitleaks-scan inputs.version.default ('${DEFAULT_GL_VER:-unset}') does not match PINNED_VERSION ('${PINNED_GL_VER:-unset}')"
+    FAILED=1
+  fi
   if [ -z "$PINNED_GL_SHA" ] || ! printf '%s\n' "$PINNED_GL_SHA" | grep -qE '^[0-9a-f]{64}$'; then
     echo "::error file=$GITLEAKS_ACTION::gitleaks-scan PINNED_SHA256 must be a valid 64-character hexadecimal digest"
     FAILED=1
   else
-    echo "    Verified gitleaks-scan SSoT digest (${PINNED_GL_SHA})."
+    echo "    Verified gitleaks-scan SSoT (${DEFAULT_GL_VER} -> ${PINNED_GL_SHA})."
   fi
 fi
 
