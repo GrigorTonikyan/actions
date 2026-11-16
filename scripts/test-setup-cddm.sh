@@ -97,6 +97,7 @@ fi
 out=""
 url=""
 has_cfg="false"
+is_head="false"
 while [ $# -gt 0 ]; do
   case "$1" in
     -o)
@@ -110,6 +111,10 @@ while [ $# -gt 0 ]; do
       fi
       shift 2
       ;;
+    -*I*|*--head*)
+      is_head="true"
+      shift
+      ;;
     -*)
       shift
       ;;
@@ -120,19 +125,29 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if [[ "$url" == */releases/latest ]]; then
+if [[ "$url" == */releases\?* ]] || [[ "$url" == */releases/latest ]]; then
   if [ "${MOCK_LATEST_FAIL:-false}" = "true" ]; then
     exit 22
   fi
   if [[ "$url" == *"/wrong-org/cddm/"* ]]; then
     exit 22
   fi
-  printf '{"id":999,"tag_name":"%s","name":"Release %s"}\n' "${MOCK_LATEST_TAG:-v4.12.0}" "${MOCK_LATEST_TAG:-v4.12.0}" > "$out"
+  latest_tag="${MOCK_LATEST_TAG:-v4.12.0}"
+  ready_entry="$(printf '{"id":999,"tag_name":"%s","draft":false,"prerelease":false,"assets":[{"name":"cddm-%s-x86_64-unknown-linux-gnu.tar.gz"},{"name":"SHA256SUMS.txt"}]}' "$latest_tag" "$latest_tag")"
+  if [ -n "${MOCK_INCOMPLETE_TAG:-}" ]; then
+    incomplete_entry="$(printf '{"id":1000,"tag_name":"%s","draft":false,"prerelease":false,"assets":[]}' "$MOCK_INCOMPLETE_TAG")"
+    printf '[%s,%s]\n' "$incomplete_entry" "$ready_entry" > "$out"
+  else
+    printf '[%s]\n' "$ready_entry" > "$out"
+  fi
   exit 0
 fi
 
 for tag in v4.12.0 v4.10.5 "${PINNED_VER:-v4.11.0}"; do
   if [[ "$url" == *"/releases/download/${tag}/SHA256SUMS.txt" ]]; then
+    if [ "$is_head" = "true" ]; then
+      test -f "${MOCK_FIXTURES}/${tag}/SHA256SUMS.txt" && exit 0 || exit 22
+    fi
     if [ "${MOCK_ZERO_SHA256SUMS:-false}" = "true" ]; then
       printf '0000000000000000000000000000000000000000000000000000000000000000  cddm-%s-x86_64-unknown-linux-gnu.tar.gz\n' "$tag" > "$out"
     else
@@ -142,6 +157,9 @@ for tag in v4.12.0 v4.10.5 "${PINNED_VER:-v4.11.0}"; do
   fi
   arch_file="cddm-${tag}-x86_64-unknown-linux-gnu.tar.gz"
   if [[ "$url" == *"/releases/download/${tag}/${arch_file}" ]]; then
+    if [ "$is_head" = "true" ]; then
+      test -f "${MOCK_FIXTURES}/${tag}/${arch_file}" && exit 0 || exit 22
+    fi
     cp "${MOCK_FIXTURES}/${tag}/${arch_file}" "$out"
     exit 0
   fi
@@ -192,6 +210,7 @@ EOF
     export INPUT_DESTINATION="${case_dir}/dest"
     export INPUT_TOKEN="${INPUT_TOKEN:-}"
     export MOCK_LATEST_TAG="${MOCK_LATEST_TAG:-v4.12.0}"
+    export MOCK_INCOMPLETE_TAG="${MOCK_INCOMPLETE_TAG:-}"
     export MOCK_LATEST_FAIL="${MOCK_LATEST_FAIL:-false}"
     export MOCK_ZERO_SHA256SUMS="${MOCK_ZERO_SHA256SUMS:-false}"
     export MOCK_CURL_ARGS_LOG="${case_dir}/curl-args.log"
@@ -290,5 +309,11 @@ if PREINSTALLED_CDDM_VER="" INPUT_VERSION="v4.10.5" INPUT_SHA256="aaaaaaaaaaaaaa
   exit 1
 fi
 echo "    [PASS] Case 9: explicit sha256 override validates match and rejects mismatch"
+
+# Case 10: Incomplete latest release (assets pending) is skipped cleanly in favor of newest ready release
+PREINSTALLED_CDDM_VER="" MOCK_INCOMPLETE_TAG="v4.13.0" MOCK_LATEST_TAG="v4.12.0" INPUT_VERSION="latest" run_case
+assert_eq "$(grep '^version=' "${LAST_CASE_DIR}/output" | cut -d= -f2)" "4.12.0" "Case 10 skips incomplete release"
+assert_eq "$(grep '^tag=' "${LAST_CASE_DIR}/output" | cut -d= -f2)" "v4.12.0" "Case 10 ready tag"
+echo "    [PASS] Case 10: incomplete latest release without binary assets is skipped cleanly"
 
 echo "[PASS] All setup-cddm unit tests passed!"

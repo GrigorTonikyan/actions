@@ -80,7 +80,7 @@ Latest-by-default (or pinned) binary installer and cryptographic verifier for CD
     destination: "/usr/local/bin"
 ```
 
-- **Always-Latest Default & Pinning Support**: Defaults to `"latest"` by querying `${GITHUB_SERVER_URL}/api/v1/repos/<owner>/cddm/releases/latest` (refusing silent version downgrades on API failures), while still accepting explicit semver tags (`v4.11.0` or `4.11.0`).
+- **Always-Latest Default & Pinning Support**: Defaults to `"latest"` by querying `${GITHUB_SERVER_URL}/api/v1/repos/<owner>/cddm/releases?limit=15` (skipping incomplete releases whose binary/checksum assets are still building and refusing silent version downgrades on API failures), while still accepting explicit semver tags (`v4.11.0` or `4.11.0`).
 - **Zero-Hardcoded Endpoint & Cryptographic SHA-256 Verification**: Derives the download base URL dynamically from `${GITHUB_SERVER_URL}`, validates against the pinned SSoT digest (`v4.11.0`) or release `SHA256SUMS.txt` automatically, and blocks all-zero placeholder checksums.
 - **Smart Upgrade & Idempotency Check**: Fast-paths when the target version is already active in `PATH`, and automatically upgrades if an older CDDM binary is pre-installed.
 - **Outputs**: Exposes `version`, `tag`, and `cached`.

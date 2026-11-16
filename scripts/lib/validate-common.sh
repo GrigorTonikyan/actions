@@ -218,8 +218,8 @@ verify_installer_action_ssot() {
       echo "::error file=$action_file::${action_label} inputs.version.default must be 'latest' to stay on latest release (found '${default_ver:-unset}')"
       FAILED=1
     fi
-    if ! grep -q "releases/latest" "$action_file" || ! grep -q "SHA256SUMS.txt" "$action_file"; then
-      echo "::error file=$action_file::${action_label} must resolve /releases/latest and verify SHA256SUMS.txt"
+    if ! grep -qE "releases\?limit=|releases/latest" "$action_file" || ! grep -q "SHA256SUMS.txt" "$action_file"; then
+      echo "::error file=$action_file::${action_label} must resolve latest ready release metadata and verify SHA256SUMS.txt"
       FAILED=1
     fi
   else
