@@ -1,0 +1,74 @@
+# Canonical CDDM Architectural Rules & Policy Configuration for Next.js + Bun + Vite+
+# Enforces modularity (<= 500 LOC / ~2500 tokens), zero-emoji hygiene, banned legacy tooling,
+# layer isolation, and zero duplication in security-critical code.
+
+zero_emojis = true
+
+[[boundaries]]
+name = "domain-lib-isolation"
+description = "Core server and library utilities must not duplicate into UI routes or components"
+source = "src/lib/**"
+forbidden_targets = ["src/app/**", "src/components/**"]
+severity = "error"
+
+[[zero_duplication]]
+name = "security-auth-zero-duplication"
+description = "Authentication, session, and security modules must maintain 0% duplicate code"
+pattern = "src/lib/auth/**"
+severity = "error"
+
+[[limits]]
+name = "app-routes-cluster-limit"
+description = "App Router pages and handlers must not exceed 120 duplicate tokens or 3 occurrences"
+pattern = "src/app/**"
+max_tokens = 120
+max_occurrences = 3
+severity = "warning"
+
+[[token_budgets]]
+name = "max-source-file-length"
+description = "Enforce <= 500 lines (~2500 tokens) modularity ceiling per TypeScript source file"
+pattern = "src/**/*.{ts,tsx}"
+max_file_tokens = 2500
+severity = "error"
+
+[[token_budgets]]
+name = "max-test-file-length"
+description = "Enforce <= 500 lines (~2500 tokens) modularity ceiling per test file"
+pattern = "tests/**/*.{ts,tsx}"
+max_file_tokens = 2500
+severity = "error"
+
+[[prohibited_patterns]]
+name = "no-tls-bypass"
+description = "Disallow insecure TLS verification bypasses (NODE_TLS_REJECT_UNAUTHORIZED=0 / strict-ssl=false)"
+pattern = "(NODE_TLS_REJECT_UNAUTHORIZED\\s*[:=]\\s*[\"']?0|strict-ssl\\s*=\\s*[\"']?false)"
+pattern_type = "regex"
+include = ["src/**", "Dockerfile*"]
+severity = "error"
+remediation = "Configure trusted CA certificates via NODE_EXTRA_CA_CERTS or SSL_CERT_FILE"
+
+[[prohibited_patterns]]
+name = "no-console-log"
+description = "Disallow stray console.log statements in production application source"
+pattern = "console\\.log\\("
+pattern_type = "regex"
+include = ["src/**/*.ts", "src/**/*.tsx"]
+exclude = ["src/**/*.test.ts", "src/**/*.test.tsx"]
+severity = "error"
+remediation = "Use a structured logger or remove debug console.log calls"
+
+[[forbidden_files]]
+name = "banned-legacy-tooling"
+description = "Disallow legacy ESLint, Prettier, foreign lockfiles, and .github workflow files"
+patterns = [
+  ".eslintrc*",
+  ".prettierrc*",
+  "yarn.lock",
+  "package-lock.json",
+  "pnpm-lock.yaml",
+  "bun.lockb",
+  ".github/**"
+]
+severity = "error"
+remediation = "Use Vite+ unified toolchain (vp check) with bun.lock and .gitea/workflows/*.yaml"

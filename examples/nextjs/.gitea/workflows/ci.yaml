@@ -48,11 +48,14 @@ jobs:
       - name: Run Unit Tests
         run: bun run test
 
-      - name: Setup CDDM Binary
+      - name: Setup CDDM Binary (Latest)
         uses: self:gt-dev/actions/setup-cddm@v1
 
       - name: Verify Architectural Rules
-        run: cddm rules check --rules .cddmrules.toml
+        run: cddm rules check --rules .cddmrules.toml --enforce-policies
+
+      - name: Scan Code Duplication & Policy Compliance
+        run: cddm scan . --no-ignore-tests --no-ignore-mocks --detect-type4 true --enforce-policies --fail-threshold 5.0
 
   e2e-tests:
     name: Playwright E2E Tests

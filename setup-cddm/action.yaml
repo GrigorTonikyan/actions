@@ -1,10 +1,10 @@
 name: "Setup CDDM"
-description: "Pinned binary installer and verifier for CDDM (Code Duplication Detection & Metrics) CLI"
+description: "Latest or pinned binary installer and cryptographic verifier for CDDM (Code Duplication Detection & Metrics) CLI"
 inputs:
   version:
-    description: "CDDM version to install"
+    description: "CDDM version to install (defaults to 'latest'; accepts semver tags like 'v4.11.0' or '4.11.0')"
     required: false
-    default: "v4.10.2"
+    default: "latest"
   sha256:
     description: "Optional expected SHA256 checksum override (defaults to pinned SSoT digest or release SHA256SUMS.txt lookup)"
     required: false
@@ -21,14 +21,32 @@ inputs:
     description: "Target binary installation directory"
     required: false
     default: "/usr/local/bin"
+  token:
+    description: "Optional access token for authenticating against private CDDM release repositories"
+    required: false
+    default: ""
+
+outputs:
+  version:
+    description: "Resolved CDDM semver version installed or verified in PATH"
+    value: ${{ steps.install-cddm.outputs.version }}
+  tag:
+    description: "Resolved CDDM release tag (e.g., v4.11.0)"
+    value: ${{ steps.install-cddm.outputs.tag }}
+  cached:
+    description: "Whether the target CDDM version was already installed in PATH"
+    value: ${{ steps.install-cddm.outputs.cached }}
 
 runs:
   using: "composite"
   steps:
     - name: Configure TLS CA Certificate Trust
       uses: self:gt-dev/actions/setup-tls-ca@v1
+      with:
+        server-url: ${{ inputs.server-url }}
 
-    - name: Install Pinned & Verified CDDM Binary
+    - name: Install Latest or Pinned Verified CDDM Binary
+      id: install-cddm
       shell: bash
       env:
         INPUT_VERSION: ${{ inputs.version }}
@@ -36,27 +54,43 @@ runs:
         INPUT_REPOSITORY: ${{ inputs.repository }}
         INPUT_SERVER_URL: ${{ inputs.server-url }}
         INPUT_DESTINATION: ${{ inputs.destination }}
+        INPUT_TOKEN: ${{ inputs.token }}
       run: |
         set -euo pipefail
-        PINNED_VERSION="v4.10.2"
-        PINNED_SHA256="9fd56753d173b1348b9c2b86d0e75eedb678e9f185521b2bcf504f5f05f5d633"
+        PINNED_VERSION="v4.11.0"
+        PINNED_SHA256="e13e2f108991b062f11a75aaa685c1bfd0190dd2db3ba2e03993dd0c0725fecb"
+
+        emit_outputs() {
+          local ver="$1"
+          local tag="$2"
+          local cached="$3"
+          if [ -n "${GITHUB_OUTPUT:-}" ]; then
+            {
+              echo "version=${ver}"
+              echo "tag=${tag}"
+              echo "cached=${cached}"
+            } >> "$GITHUB_OUTPUT"
+          fi
+        }
 
         SUDO=""
         if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
           SUDO="sudo"
         fi
 
-        RAW_VERSION="${INPUT_VERSION:-$PINNED_VERSION}"
-        SEMVER="${RAW_VERSION#v}"
-        TAG_VERSION="v${SEMVER}"
-
-        if command -v cddm >/dev/null 2>&1; then
-          CURRENT_VER="$(cddm --version 2>&1 | awk '{print $2}' || true)"
-          if [ "$CURRENT_VER" = "$SEMVER" ] || [ "$CURRENT_VER" = "$TAG_VERSION" ]; then
-            echo "--> [FAST-PATH] CDDM ${CURRENT_VER} is already installed and available in PATH."
-            exit 0
-          fi
-        fi
+        ARCH="$(uname -m)"
+        case "$ARCH" in
+          x86_64|amd64)
+            TARGET_ARCH="x86_64"
+            ;;
+          arm64|aarch64)
+            TARGET_ARCH="aarch64"
+            ;;
+          *)
+            echo "::error::Unsupported CPU architecture for CDDM: ${ARCH}"
+            exit 1
+            ;;
+        esac
 
         BASE_URL="${INPUT_SERVER_URL:-${GITHUB_SERVER_URL:-}}"
         BASE_URL="${BASE_URL%/}"
@@ -69,48 +103,145 @@ runs:
         if [ -z "$REPO_SLUG" ] || [ "$REPO_SLUG" = "/cddm" ]; then
           if [ -n "${GITHUB_REPOSITORY_OWNER:-}" ]; then
             REPO_SLUG="${GITHUB_REPOSITORY_OWNER}/cddm"
+          elif [ -n "${GITHUB_ACTION_REPOSITORY:-}" ]; then
+            REPO_SLUG="${GITHUB_ACTION_REPOSITORY%%/*}/cddm"
           else
             echo "::error::Unable to resolve repository owner for CDDM download."
             exit 1
           fi
         fi
 
-        TARGET_DIR="${INPUT_DESTINATION:-/usr/local/bin}"
-        $SUDO mkdir -p "$TARGET_DIR"
-
-        ARCHIVE_NAME="cddm-${TAG_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-        DOWNLOAD_BASE_URL="${BASE_URL}/${REPO_SLUG}/releases/download/${TAG_VERSION}"
-        DOWNLOAD_URL="${DOWNLOAD_BASE_URL}/${ARCHIVE_NAME}"
         TMP_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/cddm-setup.XXXXXX")"
         trap 'rm -rf "$TMP_DIR"' EXIT
 
+        CURL_AUTH_ARGS=()
+        if [ -n "${INPUT_TOKEN:-}" ]; then
+          CURL_AUTH_CFG="${TMP_DIR}/curl-auth.cfg"
+          umask 077
+          printf 'header = "Authorization: token %s"\n' "$INPUT_TOKEN" > "$CURL_AUTH_CFG"
+          umask 022
+          CURL_AUTH_ARGS=(-K "$CURL_AUTH_CFG")
+        fi
+
+        RAW_VERSION="${INPUT_VERSION:-latest}"
+        RAW_LOWER="$(printf '%s' "$RAW_VERSION" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+
+        if [ -z "$RAW_LOWER" ] || [ "$RAW_LOWER" = "latest" ]; then
+          API_URL="${BASE_URL}/api/v1/repos/${REPO_SLUG}/releases/latest"
+          META_FILE="${TMP_DIR}/release.json"
+          if ! curl -fsSL "${CURL_AUTH_ARGS[@]}" "$API_URL" -o "$META_FILE"; then
+            DEFAULT_OWNER_REPO="${GITHUB_REPOSITORY_OWNER:-}/cddm"
+            ACTION_OWNER="${GITHUB_ACTION_REPOSITORY:-}"
+            ACTION_OWNER="${ACTION_OWNER%%/*}"
+            if [ -n "$ACTION_OWNER" ] && [ "$REPO_SLUG" = "$DEFAULT_OWNER_REPO" ] && [ "${ACTION_OWNER}/cddm" != "$REPO_SLUG" ]; then
+              FALLBACK_REPO="${ACTION_OWNER}/cddm"
+              FALLBACK_URL="${BASE_URL}/api/v1/repos/${FALLBACK_REPO}/releases/latest"
+              if curl -fsSL "${CURL_AUTH_ARGS[@]}" "$FALLBACK_URL" -o "$META_FILE"; then
+                REPO_SLUG="$FALLBACK_REPO"
+                API_URL="$FALLBACK_URL"
+              else
+                echo "::error::Failed to query latest CDDM release metadata from ${API_URL} (and fallback ${FALLBACK_URL}). Refusing silent version downgrade."
+                exit 1
+              fi
+            else
+              echo "::error::Failed to query latest CDDM release metadata from ${API_URL}. Refusing silent version downgrade."
+              exit 1
+            fi
+          fi
+
+          if command -v jq >/dev/null 2>&1; then
+            RESOLVED_TAG="$(jq -r '.tag_name // empty' "$META_FILE" | head -n1 | tr -d ' \r\n')"
+          else
+            RESOLVED_TAG="$(grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' "$META_FILE" | head -n1 | sed -E 's/.*"([^"]+)"$/\1/' | tr -d ' \r\n')"
+          fi
+
+          if [ -z "$RESOLVED_TAG" ] || ! printf '%s\n' "$RESOLVED_TAG" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            echo "::error::Could not resolve valid release tag_name from ${API_URL} (got '${RESOLVED_TAG:-empty}'). Refusing silent version downgrade."
+            exit 1
+          fi
+
+          SEMVER="${RESOLVED_TAG#v}"
+          TAG_VERSION="v${SEMVER}"
+          echo "--> [LATEST] Resolved latest CDDM release: ${TAG_VERSION} (from ${REPO_SLUG})."
+        else
+          CLEAN_VERSION="$(printf '%s' "$RAW_VERSION" | tr -d ' \r\n')"
+          if ! printf '%s\n' "$CLEAN_VERSION" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            echo "::error::Invalid CDDM version '${RAW_VERSION}'. Expected 'latest' or semver tag (e.g., 'v4.11.0')."
+            exit 1
+          fi
+          SEMVER="${CLEAN_VERSION#v}"
+          TAG_VERSION="v${SEMVER}"
+        fi
+
+        if command -v cddm >/dev/null 2>&1; then
+          CURRENT_VER="$(cddm --version 2>&1 | awk '{print $2}' | tr -d ' \r\n' || true)"
+          CURRENT_VER="${CURRENT_VER#v}"
+          if [ "$CURRENT_VER" = "$SEMVER" ]; then
+            echo "--> [FAST-PATH] CDDM ${CURRENT_VER} is already installed and matches target ${TAG_VERSION}."
+            emit_outputs "$CURRENT_VER" "$TAG_VERSION" "true"
+            exit 0
+          fi
+          echo "--> [UPGRADE] Installed CDDM (${CURRENT_VER:-unknown}) differs from target (${SEMVER}); installing ${TAG_VERSION}..."
+        fi
+
+        TARGET_DIR="${INPUT_DESTINATION:-/usr/local/bin}"
+        $SUDO mkdir -p "$TARGET_DIR"
+
+        ARCHIVE_NAME="cddm-${TAG_VERSION}-${TARGET_ARCH}-unknown-linux-gnu.tar.gz"
+        DOWNLOAD_BASE_URL="${BASE_URL}/${REPO_SLUG}/releases/download/${TAG_VERSION}"
+        DOWNLOAD_URL="${DOWNLOAD_BASE_URL}/${ARCHIVE_NAME}"
+
         echo "--> Downloading CDDM ${TAG_VERSION} from ${DOWNLOAD_URL}..."
-        curl -fsSL "$DOWNLOAD_URL" -o "${TMP_DIR}/${ARCHIVE_NAME}"
+        curl -fsSL "${CURL_AUTH_ARGS[@]}" "$DOWNLOAD_URL" -o "${TMP_DIR}/${ARCHIVE_NAME}"
 
         EXPECTED_SHA256="${INPUT_SHA256:-}"
-        if [ -z "$EXPECTED_SHA256" ] && [ "$TAG_VERSION" = "$PINNED_VERSION" ]; then
+        if [ -z "$EXPECTED_SHA256" ] && [ "$TAG_VERSION" = "$PINNED_VERSION" ] && [ "$TARGET_ARCH" = "x86_64" ]; then
           EXPECTED_SHA256="$PINNED_SHA256"
         fi
 
-        if [ -n "$EXPECTED_SHA256" ]; then
-          echo "${EXPECTED_SHA256}  ${TMP_DIR}/${ARCHIVE_NAME}" | sha256sum -c -
-        else
+        if [ -z "$EXPECTED_SHA256" ]; then
           echo "--> Fetching SHA256SUMS.txt for ${TAG_VERSION}..."
-          curl -fsSL "${DOWNLOAD_BASE_URL}/SHA256SUMS.txt" -o "${TMP_DIR}/SHA256SUMS.txt"
-          EXPECTED_SHA256="$(awk -v file="$ARCHIVE_NAME" '$2 == file || $2 == ("*" file) || $2 == ("./" file) { print $1; exit }' "${TMP_DIR}/SHA256SUMS.txt")"
+          curl -fsSL "${CURL_AUTH_ARGS[@]}" "${DOWNLOAD_BASE_URL}/SHA256SUMS.txt" -o "${TMP_DIR}/SHA256SUMS.txt"
+          EXPECTED_SHA256="$(awk -v file="$ARCHIVE_NAME" '{
+            fname = $2
+            sub(/^\*/, "", fname)
+            sub(/^\.\//, "", fname)
+            if (fname == file) {
+              print tolower($1)
+              exit
+            }
+          }' "${TMP_DIR}/SHA256SUMS.txt")"
           if [ -z "$EXPECTED_SHA256" ]; then
             echo "::error::Checksum entry for ${ARCHIVE_NAME} not found in ${TAG_VERSION} SHA256SUMS.txt"
             exit 1
           fi
-          echo "${EXPECTED_SHA256}  ${TMP_DIR}/${ARCHIVE_NAME}" | sha256sum -c -
         fi
+
+        EXPECTED_SHA256="$(printf '%s' "$EXPECTED_SHA256" | tr '[:upper:]' '[:lower:]' | tr -d ' \r\n')"
+        if ! printf '%s\n' "$EXPECTED_SHA256" | grep -qE '^[0-9a-f]{64}$' || printf '%s\n' "$EXPECTED_SHA256" | grep -qE '^0+$'; then
+          echo "::error::Invalid or forbidden all-zero SHA-256 checksum for ${ARCHIVE_NAME}: '${EXPECTED_SHA256}'"
+          exit 1
+        fi
+
+        echo "${EXPECTED_SHA256}  ${TMP_DIR}/${ARCHIVE_NAME}" | sha256sum -c -
 
         $SUDO tar -xzf "${TMP_DIR}/${ARCHIVE_NAME}" -C "$TARGET_DIR"
         $SUDO chmod +x "${TARGET_DIR}"/cddm*
 
-        if ! command -v cddm >/dev/null 2>&1 && [ -f "${TARGET_DIR}/cddm" ]; then
-          echo "$TARGET_DIR" >> "$GITHUB_PATH"
+        ACTIVE_CDDM="$(command -v cddm || true)"
+        if [ "$ACTIVE_CDDM" != "${TARGET_DIR}/cddm" ] && [ -x "${TARGET_DIR}/cddm" ]; then
+          if [ -n "${GITHUB_PATH:-}" ]; then
+            echo "$TARGET_DIR" >> "$GITHUB_PATH"
+          fi
           export PATH="${TARGET_DIR}:${PATH}"
         fi
 
+        INSTALLED_VER="$(cddm --version 2>&1 | awk '{print $2}' | tr -d ' \r\n' || true)"
+        INSTALLED_VER="${INSTALLED_VER#v}"
+        if [ "$INSTALLED_VER" != "$SEMVER" ]; then
+          echo "::error::Installed CDDM binary version '${INSTALLED_VER:-unknown}' does not match expected '${SEMVER}'."
+          exit 1
+        fi
+
+        emit_outputs "$SEMVER" "$TAG_VERSION" "false"
         cddm --version
