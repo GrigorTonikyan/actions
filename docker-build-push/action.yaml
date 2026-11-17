@@ -478,7 +478,14 @@ runs:
               SCOPE_SUFFIX=",scope=${INPUT_CACHE_SCOPE}"
             fi
             if [ -z "$CACHE_FROM_OUT" ]; then
-              CACHE_FROM_OUT="$(append_line "$CACHE_FROM_OUT" "type=gha${SCOPE_SUFFIX}")"
+              if [ "$SUPPORTS_CACHE_EXPORT" = "true" ]; then
+                CACHE_FROM_OUT="$(append_line "$CACHE_FROM_OUT" "type=gha${SCOPE_SUFFIX}")"
+              else
+                echo "::warning::Builder '${TARGET_BUILDER:-${ACTIVE_BUILDER:-default}}' uses driver '${TARGET_DRIVER:-docker}' without containerd image store (cache export unsupported); omitting unsupported cache-mode=gha --cache-from."
+                if [ -n "$INLINE_CACHE_TAG" ]; then
+                  CACHE_FROM_OUT="$(append_line "$CACHE_FROM_OUT" "type=registry,ref=${INLINE_CACHE_TAG}")"
+                fi
+              fi
             fi
             if [ -z "$CACHE_TO_OUT" ]; then
               if [ "$SUPPORTS_CACHE_EXPORT" = "true" ]; then
@@ -508,6 +515,24 @@ runs:
             exit 1
             ;;
         esac
+
+        if [ "$SUPPORTS_CACHE_EXPORT" != "true" ] && [ -n "$CACHE_FROM_OUT" ]; then
+          FILTERED_CACHE_FROM=""
+          DROPPED_CACHE_FROM="false"
+          while IFS= read -r cache_entry; do
+            [ -z "$cache_entry" ] && continue
+            if printf '%s\n' "$cache_entry" | grep -qE '^type=gha([,[:space:]]|$)'; then
+              echo "::warning::Builder '${TARGET_BUILDER:-${ACTIVE_BUILDER:-default}}' uses driver '${TARGET_DRIVER:-docker}' without containerd image store (gha cache importer unsupported); dropping unsupported --cache-from '${cache_entry}'."
+              DROPPED_CACHE_FROM="true"
+            else
+              FILTERED_CACHE_FROM="$(append_line "$FILTERED_CACHE_FROM" "$cache_entry")"
+            fi
+          done <<< "$CACHE_FROM_OUT"
+          CACHE_FROM_OUT="$FILTERED_CACHE_FROM"
+          if [ "$DROPPED_CACHE_FROM" = "true" ] && [ -z "$CACHE_FROM_OUT" ] && [ -n "$INLINE_CACHE_TAG" ]; then
+            CACHE_FROM_OUT="$(append_line "$CACHE_FROM_OUT" "type=registry,ref=${INLINE_CACHE_TAG}")"
+          fi
+        fi
 
         if [ "$SUPPORTS_CACHE_EXPORT" != "true" ] && [ -n "$CACHE_TO_OUT" ]; then
           FILTERED_CACHE_TO=""

@@ -257,12 +257,13 @@ assert_not_contains "$log_text" "::warning::" "Case 3 emits no warning"
 assert_contains "$log_text" "cache-export='true'" "Case 3 logs cache-export=true"
 echo "    [PASS] Case 3: containerd-enabled docker driver keeps full registry cache export"
 
-# Case 4: gha and local cache modes omit unsupported --cache-to without containerd
+# Case 4: gha and local cache modes omit unsupported --cache-to (and type=gha --cache-from) without containerd
 MOCK_DRIVER="docker" MOCK_CACHE_EXPORT_FEATURE="false" MOCK_BUILDER_NAME="default" \
   MOCK_SNAPSHOTTER_LABEL="" \
   INPUT_PUSH="true" INPUT_CACHE_MODE="gha" INPUT_CACHE_SCOPE="ci" \
   run_prep_case
 out_file="${LAST_CASE_DIR}/output"
+assert_eq "$(get_gh_output "$out_file" "cache-from")" "" "Case 4a gha cache-from omitted when no tags"
 assert_eq "$(get_gh_output "$out_file" "cache-to")" "" "Case 4a gha cache-to omitted"
 assert_contains "$(cat "${LAST_CASE_DIR}/log")" "::warning::" "Case 4a gha emits warning"
 
@@ -273,7 +274,17 @@ MOCK_DRIVER="docker" MOCK_CACHE_EXPORT_FEATURE="false" MOCK_BUILDER_NAME="defaul
 out_file="${LAST_CASE_DIR}/output"
 assert_eq "$(get_gh_output "$out_file" "cache-to")" "" "Case 4b local cache-to omitted"
 assert_contains "$(cat "${LAST_CASE_DIR}/log")" "::warning::" "Case 4b local emits warning"
-echo "    [PASS] Case 4: gha and local modes omit unsupported --cache-to on docker driver"
+
+MOCK_DRIVER="docker" MOCK_CACHE_EXPORT_FEATURE="false" MOCK_BUILDER_NAME="default" \
+  MOCK_SNAPSHOTTER_LABEL="" \
+  INPUT_PUSH="true" INPUT_CACHE_MODE="gha" INPUT_CACHE_SCOPE="ci" \
+  INPUT_TAGS="example.invalid/org/app:v1.0.0,example.invalid/org/app:latest" \
+  run_prep_case
+out_file="${LAST_CASE_DIR}/output"
+assert_eq "$(get_gh_output "$out_file" "cache-from")" "type=registry,ref=example.invalid/org/app:latest" "Case 4c gha falls back cache-from to inline latest tag"
+assert_not_contains "$(get_gh_output "$out_file" "cache-from")" "type=gha" "Case 4c omits type=gha cache-from"
+assert_eq "$(get_gh_output "$out_file" "cache-to")" "" "Case 4c gha cache-to omitted with BUILDKIT_INLINE_CACHE=1"
+echo "    [PASS] Case 4: gha and local modes omit unsupported --cache-to and type=gha --cache-from on docker driver"
 
 # Case 5: explicit cache-to filters unsupported entries while preserving type=inline
 MOCK_DRIVER="docker" MOCK_CACHE_EXPORT_FEATURE="false" MOCK_BUILDER_NAME="default" \
@@ -334,5 +345,17 @@ if MOCK_DRIVER="docker-container" MOCK_CACHE_EXPORT_FEATURE="true" MOCK_BUILDER_
 fi
 assert_contains "$(cat "${LAST_CASE_DIR}/log")" "::error::Active Buildx builder" "Case 9 emits expected error"
 echo "    [PASS] Case 9: docker-container builder blocked unless allow-custom-builder=true"
+
+# Case 10: explicit cache-from filters unsupported type=gha entries on docker driver
+MOCK_DRIVER="docker" MOCK_CACHE_EXPORT_FEATURE="false" MOCK_BUILDER_NAME="default" \
+  MOCK_SNAPSHOTTER_LABEL="" \
+  INPUT_PUSH="true" INPUT_CACHE_MODE="" \
+  INPUT_TAGS="example.invalid/org/app:latest" \
+  INPUT_CACHE_FROM=$'type=gha,scope=ci\ntype=registry,ref=example.invalid/org/app:buildcache' \
+  run_prep_case
+out_file="${LAST_CASE_DIR}/output"
+assert_eq "$(get_gh_output "$out_file" "cache-from")" "type=registry,ref=example.invalid/org/app:buildcache" "Case 10 drops explicit type=gha and keeps registry"
+assert_contains "$(cat "${LAST_CASE_DIR}/log")" "::warning::" "Case 10 emits warning for dropped type=gha cache-from"
+echo "    [PASS] Case 10: explicit cache-from drops unsupported type=gha on docker driver"
 
 echo "[PASS] All docker-build-push prep tests passed!"
