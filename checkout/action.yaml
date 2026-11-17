@@ -1,0 +1,122 @@
+name: "Checkout Repository"
+description: "Zero-deprecation composite checkout action wrapping SHA-pinned actions/checkout with internal loopback TLS CA trust"
+inputs:
+  repository:
+    description: "Repository name with owner"
+    required: false
+    default: ${{ github.repository }}
+  ref:
+    description: "The branch, tag or SHA to checkout"
+    required: false
+    default: ""
+  token:
+    description: "Personal access token used to fetch the repository"
+    required: false
+    default: ${{ github.token }}
+  ssh-key:
+    description: "SSH key used to fetch the repository"
+    required: false
+    default: ""
+  ssh-known-hosts:
+    description: "Known hosts in addition to user and global host key database"
+    required: false
+    default: ""
+  ssh-strict:
+    description: "Whether to perform strict host key checking"
+    required: false
+    default: "true"
+  ssh-user:
+    description: "The user to use when connecting to the remote SSH host"
+    required: false
+    default: "git"
+  persist-credentials:
+    description: "Whether to configure the token or SSH key with local git config"
+    required: false
+    default: "true"
+  path:
+    description: "Relative path under GITHUB_WORKSPACE to place the repository"
+    required: false
+    default: ""
+  clean:
+    description: "Whether to execute git clean and reset before fetching"
+    required: false
+    default: "true"
+  sparse-checkout:
+    description: "Do a sparse checkout on given patterns"
+    required: false
+    default: ""
+  sparse-checkout-cone-mode:
+    description: "Whether to use cone-mode when doing a sparse checkout"
+    required: false
+    default: "true"
+  fetch-depth:
+    description: "Number of commits to fetch (0 indicates all history)"
+    required: false
+    default: "1"
+  fetch-tags:
+    description: "Whether to fetch tags, even if fetch-depth > 0"
+    required: false
+    default: "false"
+  show-progress:
+    description: "Whether to show progress status output when fetching"
+    required: false
+    default: "true"
+  lfs:
+    description: "Whether to download Git-LFS files"
+    required: false
+    default: "false"
+  submodules:
+    description: "Whether to checkout submodules (false, true, or recursive)"
+    required: false
+    default: "false"
+  set-safe-directory:
+    description: "Add repository path as safe.directory for Git global config"
+    required: false
+    default: "true"
+  github-server-url:
+    description: "Base URL for the Git instance to clone from"
+    required: false
+    default: ""
+  configure-tls-ca:
+    description: "Configure NODE_EXTRA_CA_CERTS, SSL_CERT_FILE, and CURL_CA_BUNDLE before checkout"
+    required: false
+    default: "true"
+
+outputs:
+  ref:
+    description: "The branch, tag or SHA that was checked out"
+    value: ${{ steps.checkout.outputs.ref }}
+  commit:
+    description: "The commit SHA that was checked out"
+    value: ${{ steps.checkout.outputs.commit }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Configure Internal Loopback TLS CA Trust
+      if: ${{ inputs.configure-tls-ca == 'true' }}
+      uses: self:gt-dev/actions/setup-tls-ca@v1
+
+    - name: Checkout Repository
+      id: checkout
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      with:
+        repository: ${{ inputs.repository }}
+        ref: ${{ inputs.ref }}
+        token: ${{ inputs.token }}
+        ssh-key: ${{ inputs.ssh-key }}
+        ssh-known-hosts: ${{ inputs.ssh-known-hosts }}
+        ssh-strict: ${{ inputs.ssh-strict }}
+        ssh-user: ${{ inputs.ssh-user }}
+        persist-credentials: ${{ inputs.persist-credentials }}
+        path: ${{ inputs.path }}
+        clean: ${{ inputs.clean }}
+        sparse-checkout: ${{ inputs.sparse-checkout }}
+        sparse-checkout-cone-mode: ${{ inputs.sparse-checkout-cone-mode }}
+        fetch-depth: ${{ inputs.fetch-depth }}
+        fetch-tags: ${{ inputs.fetch-tags }}
+        show-progress: ${{ inputs.show-progress }}
+        lfs: ${{ inputs.lfs }}
+        submodules: ${{ inputs.submodules }}
+        set-safe-directory: ${{ inputs.set-safe-directory }}
+        github-server-url: ${{ inputs.github-server-url }}

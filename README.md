@@ -20,11 +20,25 @@ This repository leverages the **Gitea Runner 5.0.0 native `self:` action resolut
 1. **Zero External Network Egress**: The runner resolves actions directly against the local Gitea instance (`https://git.gt-web-dev.com`) over internal loopback (`172.16.12.100`), guaranteeing zero WAN bandwidth usage and physical SSD/RAM bus speeds.
 2. **Zero URL Credentials**: No tokens, passwords, or personal access tokens (PATs) are embedded in action URLs. The runner authenticates automatically using its active job credentials.
 3. **No Hardcoded Hostnames**: Workflows across repositories reference actions cleanly via `self:gt-dev/actions/<action>@<ref>`, preserving repository portability.
-4. **Resilient Local Loopback TLS**: `setup-tls-ca@v1` (invoked automatically by `setup-toolchains`, `setup-cddm`, `upload-artifact`, and `download-artifact`) dynamically configures `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, and `CURL_CA_BUNDLE` using internal Gitea CA certificates (`/etc/docker/certs.d/<host>/ca.crt`) and system CAs without disabling TLS verification.
+4. **Resilient Local Loopback TLS**: `setup-tls-ca@v1` (invoked automatically by `checkout`, `setup-toolchains`, `setup-cddm`, `upload-artifact`, and `download-artifact`) dynamically configures `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, and `CURL_CA_BUNDLE` using internal Gitea CA certificates (`/etc/docker/certs.d/<host>/ca.crt`) and system CAs without disabling TLS verification.
 
 ---
 
 ## Available Actions
+
+### 0. `checkout`
+Zero-deprecation composite checkout action wrapping SHA-pinned `actions/checkout` (`v6.1.0`) with automatic internal loopback TLS CA trust (`setup-tls-ca@v1`), replacing `builtin:checkout` removed in Gitea Runner 6.0.0.
+
+```yaml
+- name: Checkout Repository
+  uses: self:gt-dev/actions/checkout@v1
+  with:
+    fetch-depth: 1
+```
+
+**Outputs:**
+- `ref`: Checked-out branch, tag, or SHA.
+- `commit`: Resolved commit SHA.
 
 ### 1. `setup-toolchains`
 Comprehensive workspace environment setup for Bun, Python, `uv` (v10), and Rust (`rustc`, `cargo`, `rustup` stable/nightly) with automatic fast-path detection of pre-baked toolchains in enterprise container images (`runner-toolchains`, `playwright-runner`, `bun-node-alpine`), dynamic internal TLS CA trust (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `CURL_CA_BUNDLE`), dependency caching (Bun, `uv`, Cargo), and optional `.next/cache` caching for Next.js projects.
@@ -236,7 +250,7 @@ jobs:
     container:
       image: git.gt-web-dev.com/gt-dev/runner-toolchains:latest
     steps:
-      - uses: builtin:checkout
+      - uses: self:gt-dev/actions/checkout@v1
       - uses: self:gt-dev/actions/setup-toolchains@v1
         with:
           bun: "true"
@@ -261,7 +275,7 @@ jobs:
     container:
       image: git.gt-web-dev.com/gt-dev/playwright-runner:v1.65.1
     steps:
-      - uses: builtin:checkout
+      - uses: self:gt-dev/actions/checkout@v1
       - run: bun test:e2e
 ```
 
